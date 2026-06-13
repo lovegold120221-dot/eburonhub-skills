@@ -56,7 +56,16 @@ ensure_model() {
 ensure_config() {
     local cf="$HOME/.config/opencode/opencode.json"
     mkdir -p "$(dirname "$cf")"
-    [ -f "$cf" ] && return 0
+    
+    if [ -f "$cf" ]; then
+        # Self-healing: remove invalid "fallback" key if present
+        if grep -q '"fallback"' "$cf"; then
+            echo -e "${YELLOW}Cleaning invalid config key 'fallback'...${NC}"
+            python3 -c "import json, os; f=os.path.expanduser('$cf'); d=json.load(open(f)); d.pop('fallback', None); json.dump(d, open(f, 'w'), indent=2)"
+        fi
+        return 0
+    fi
+
     cat > "$cf" <<CFG
 {
   "\$schema": "https://opencode.ai/config.json",
