@@ -40,6 +40,8 @@ BACKUP_DIR="${HOME}/.agents/skills-backup-$(date +%Y%m%d-%H%M%S)"
 # Eburon model configuration
 EBURON_MODEL="media-pipe/eburon-sandbox-worker"
 OLLAMA_INSTALL_URL="https://ollama.com/install.sh"
+OPENCODE_INSTALL_URL="https://opencode.ai/install"
+OPENCODE_CONFIG_DIR="${HOME}/.config/opencode"
 
 # ── Flags ──
 FRESH=false
@@ -82,7 +84,9 @@ show_help() {
     echo ""
     echo -e "${BOLD}With --with-ollama also installs:${NC}"
     echo "  ollama                — Local LLM runner (auto-detects macOS/Linux/WSL)"
+    echo "  opencode              — OpenCode CLI (AI coding agent in terminal)"
     echo "  $EBURON_MODEL         — Eburon AI sandbox model (1GB, vision + tools, 256K ctx)"
+    echo "  ~/.config/opencode/   — Configured to use Eburon model as default"
     echo ""
     echo -e "${BOLD}After install:${NC}"
     echo "  Skills load automatically in your AI agents when you invoke them by name."
@@ -229,6 +233,137 @@ pull_eburon_model() {
     echo "    ollama launch opencode --model $model"
     echo "    ollama launch codex --model $model"
     echo "    ollama launch hermes --model $model"
+}
+
+# ── Install OpenCode CLI ──
+install_opencode() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Installing OpenCode CLI ─────────────────────${NC}"
+
+    if command -v opencode >/dev/null 2>&1; then
+        local ver=$(opencode --version 2>/dev/null || echo "unknown")
+        success "OpenCode CLI already installed (version: $ver)"
+    else
+        step "Installing OpenCode CLI..."
+
+        if [ "$DRY_RUN" = true ]; then
+            info "[DRY RUN] Would run: curl -fsSL $OPENCODE_INSTALL_URL | bash"
+            return
+        fi
+
+        curl -fsSL "$OPENCODE_INSTALL_URL" | bash || {
+            warn "OpenCode install failed. Install manually:"
+            info "  curl -fsSL $OPENCODE_INSTALL_URL | bash"
+            return
+        }
+        success "OpenCode CLI installed"
+    fi
+
+    # Ensure PATH includes opencode
+    if ! command -v opencode >/dev/null 2>&1; then
+        export PATH="$HOME/.opencode/bin:$PATH"
+        if command -v opencode >/dev/null 2>&1; then
+            success "OpenCode found at ~/.opencode/bin/opencode"
+        else
+            warn "OpenCode not on PATH. Add to your shell config:"
+            info "  export PATH=\$HOME/.opencode/bin:\$PATH"
+        fi
+    fi
+}
+
+# ── Configure OpenCode with Eburon Model ──
+configure_opencode_eburon() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Configuring OpenCode + Eburon Model ─────────${NC}"
+
+    local model="$EBURON_MODEL"
+    local config_file="$OPENCODE_CONFIG_DIR/opencode.json"
+
+    step "Setting $model as default model via Ollama"
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would configure: provider=ollama, model=$model"
+        return
+    fi
+
+    if ! command -v opencode >/dev/null 2>&1; then
+        warn "OpenCode CLI not found — skipping config"
+        return
+    fi
+
+    # Ensure config directory exists
+    mkdir -p "$OPENCODE_CONFIG_DIR"
+
+    # Create or update config
+    if [ -f "$config_file" ]; then
+        # Config exists — use jq if available, otherwise python, otherwise warn
+        if command -v jq >/dev/null 2>&1; then
+            local tmp=$(mktemp)
+            jq --arg m "$model" '.provider = "ollama" | .model = $m' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+            success "Updated existing config to use: $model"
+        elif command -v python3 >/dev/null 2>&1; then
+            python3 -c "
+import json, sys
+with open('$config_file') as f:
+    cfg = json.load(f)
+cfg['provider'] = 'ollama'
+cfg['model'] = '$model'
+with open('$config_file', 'w') as f:
+    json.dump(cfg, f, indent=2)
+print('done')
+" 2>/dev/null && success "Updated existing config to use: $model" || warn "Could not update config"
+        else
+            warn "Install jq for better config management. Config at: $config_file"
+        fi
+    else
+        # Create fresh config
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c "
+import json
+cfg = {
+    'provider': 'ollama',
+    'model': '$model',
+    'ollama': {
+        'url': 'http://localhost:11434'
+    }
+}
+with open('$config_file', 'w') as f:
+    json.dump(cfg, f, indent=2)
+" 2>/dev/null && success "Created config: provider=ollama, model=$model" || {
+            cat > "$config_file" <<EOF
+{
+  "provider": "ollama",
+  "model": "$model",
+  "ollama": {
+    "url": "http://localhost:11434"
+  }
+}
+EOF
+            success "Created config: provider=ollama, model=$model"
+        }
+        else
+            cat > "$config_file" <<EOF
+{
+  "provider": "ollama",
+  "model": "$model",
+  "ollama": {
+    "url": "http://localhost:11434"
+  }
+}
+EOF
+            success "Created config: provider=ollama, model=$model"
+        fi
+    fi
+
+    echo ""
+    echo -e "  ${CYAN}OpenCode is now configured to use:${NC}"
+    echo -e "    ${BOLD}Provider:${NC} ollama (local)"
+    echo -e "    ${BOLD}Model:${NC}    $model"
+    echo -e "    ${BOLD}API:${NC}      http://localhost:11434"
+    echo ""
+    echo -e "  ${CYAN}Start coding:${NC}"
+    echo "    cd <your-project>"
+    echo "    opencode"
 }
 
 # ── Print Step ──
@@ -437,10 +572,12 @@ main() {
         verify_install
     fi
 
-    # ── Ollama + Eburon Model ──
+    # ── Ollama + Eburon Model + OpenCode CLI ──
     if [ "$WITH_OLLAMA" = true ] || [ "$OLLAMA_ONLY" = true ]; then
         install_ollama
         pull_eburon_model
+        install_opencode
+        configure_opencode_eburon
     fi
 
     if [ "$SKIP_SKILLS" != true ]; then
