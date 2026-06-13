@@ -66,6 +66,7 @@ Parse the user's request into one or more of these domains:
 | Domain | Skills to Load |
 |--------|---------------|
 | 🎬 AI Video/Media | `ai-video-generation`, `ai-video-cinema`, `ai-video-production`, `tiktok-contents` |
+| 🎨 Image/Audio/Video | `edge-image-gen`, `edge-tts`, `edge-video-gen` |
 | 🤖 AI/ML Models | `open-search-code-lm`, `gemini-api-dev`, `gemini-interactions-api`, `finetuning` |
 | 🖥️ Edge/Offline LLM | `edge-ollama`, `edge-ollama-agents`, `edge-llama-cpp`, `edge-vllm`, `edge-exo`, `edge-jan`, `edge-mlc-llm`, `edge-llamafile`, `edge-open-webui`, `edge-langchain`, `edge-candle`, `edge-transformers-js`, `edge-tensorrt-llm`, `edge-gpt4all` |
 | 🌐 Web/Frontend | `mobile-pwa-design`, `design-html`, `design-shotgun`, `design-review`, `flutter-dev` |
@@ -159,6 +160,28 @@ After all skills complete:
 1. last30days → check mobile trends
 2. mobile-pwa-design OR flutter-dev OR sleek-design-mobile-apps
 3. mobile-app-testing → test
+```
+
+### If task involves "generate image" or "image gen" or "AI art":
+```
+1. last30days → check latest open-source image models
+2. edge-image-gen → detect hardware → select model → generate
+3. If using ComfyUI workflow → ComfyUI nodes
+```
+
+### If task involves "text-to-speech" or "voice" or "narration":
+```
+1. last30days → check latest TTS models
+2. edge-tts → detect hardware → select model (ChatTTS/Piper/XTTSv2)
+3. If voice cloning → Coqui XTTSv2 with 6-second sample
+```
+
+### If task involves "generate video" or "animate" or "text-to-video":
+```
+1. last30days → check latest video gen models
+2. edge-video-gen → detect VRAM → select model (Wan2.1/CogVideoX/Mochi)
+3. If production quality → Wan2.1-14B (24GB VRAM)
+4. If quick iteration → Wan2.1-1.3B or CogVideoX-2B
 ```
 
 ### If task involves "run LLM locally" or "offline AI" or "edge model":
