@@ -346,9 +346,15 @@ cfg = {
     "disabled_providers": existing.get("disabled_providers", [])
 }
 
-for k in existing:
-    if k not in cfg:
-        cfg[k] = existing[k]
+        # Only preserve known-safe keys — never carry broken keys forward
+        safe_keys = {"agent", "mcp", "command", "theme", "keybinds", "formatter",
+                      "lsp", "server", "tui", "plugin", "attachment", "compaction",
+                      "autoupdate", "share", "snapshot", "shell", "watcher",
+                      "permission", "experimental", "enabled_providers",
+                      "small_model", "default_agent", "tools"}
+        for k in existing:
+            if k in safe_keys and k not in cfg:
+                cfg[k] = existing[k]
 
 with open(cfg_file, "w") as f:
     json.dump(cfg, f, indent=2)
