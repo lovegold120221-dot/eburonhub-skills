@@ -313,8 +313,7 @@ configure_opencode_eburon() {
     mkdir -p "$OPENCODE_CONFIG_DIR"
 
     # Always write a COMPLETE config that OpenCode server can parse.
-    # Partial configs cause '4 of 5 requests failed' on startup.
-    # This replaces any broken config with a working one.
+    # Model format: provider-id/model-id (e.g., ollama/media-pipe/eburon-sandbox-worker)
     if command -v python3 >/dev/null 2>&1; then
         python3 <<PYEOF
 import json, os
@@ -322,20 +321,18 @@ import json, os
 cfg_file = os.path.expanduser("$config_file")
 model = "$model"
 
-# Try to preserve existing config if it's complex and working
 existing = {}
 if os.path.exists(cfg_file):
     try:
         with open(cfg_file) as f:
             existing = json.load(f)
     except:
-        pass  # Broken JSON — will be replaced
+        pass
 
-# Build a complete working config
 cfg = {
     "\$schema": "https://opencode.ai/config.json",
     "instructions": existing.get("instructions", ["AGENTS.md"]),
-    "model": existing.get("model", model),
+    "model": f"ollama/{model}",
     "skills": {
         "paths": existing.get("skills", {}).get("paths", ["~/.opencode/skills", "~/.agents/skills"])
     },
@@ -343,18 +340,12 @@ cfg = {
         "ollama": {
             "name": "Ollama",
             "npm": "@ai-sdk/openai-compatible",
-            "options": {"baseURL": "http://127.0.0.1:11434/v1"},
-            "models": {model: {"name": model}}
+            "options": {"baseURL": "http://127.0.0.1:11434/v1"}
         }
-    },
-    "fallback": {
-        "enabled": True,
-        "models": ["$FALLBACK_MODEL", "$EBURON_MODEL"]
     },
     "disabled_providers": existing.get("disabled_providers", [])
 }
 
-# Preserve extra keys from existing config (agent, mcp, command, etc.)
 for k in existing:
     if k not in cfg:
         cfg[k] = existing[k]
@@ -370,7 +361,7 @@ PYEOF
 {
   "\$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md"],
-  "model": "$model",
+  "model": "ollama/$model",
   "skills": {
     "paths": ["~/.opencode/skills", "~/.agents/skills"]
   },
@@ -378,13 +369,8 @@ PYEOF
     "ollama": {
       "name": "Ollama",
       "npm": "@ai-sdk/openai-compatible",
-      "options": { "baseURL": "http://127.0.0.1:11434/v1" },
-      "models": { "$model": { "name": "$model" } }
+      "options": { "baseURL": "http://127.0.0.1:11434/v1" }
     }
-  },
-  "fallback": {
-    "enabled": true,
-    "models": ["$FALLBACK_MODEL", "$EBURON_MODEL"]
   },
   "disabled_providers": []
 }

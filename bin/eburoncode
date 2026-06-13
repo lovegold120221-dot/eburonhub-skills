@@ -61,9 +61,15 @@ ensure_config() {
 {
   "\$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md"],
-  "model": "$EBURON_MODEL",
+  "model": "ollama/$EBURON_MODEL",
   "skills": { "paths": ["~/.opencode/skills", "~/.agents/skills"] },
-  "provider": { "ollama": { "name": "Ollama", "npm": "@ai-sdk/openai-compatible", "options": { "baseURL": "http://127.0.0.1:11434/v1" }, "models": { "$EBURON_MODEL": { "name": "$EBURON_MODEL" } } } },
+  "provider": {
+    "ollama": {
+      "name": "Ollama",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "http://127.0.0.1:11434/v1" }
+    }
+  },
   "disabled_providers": []
 }
 CFG
