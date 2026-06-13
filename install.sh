@@ -48,6 +48,7 @@ FRESH=false
 BACKUP=false
 DRY_RUN=false
 VERBOSE=false
+FORCE=false
 WITH_OLLAMA=false
 OLLAMA_ONLY=false
 SKIP_SKILLS=false
@@ -71,11 +72,12 @@ show_help() {
     echo ""
     echo -e "${BOLD}Options:${NC}"
     echo "  --fresh          Clean install — removes existing skills first"
-    echo "  --backup         Backup existing skills to ~/.agents/skills-backup-YYYYMMDD-HHMMSS/"
-    echo "  --dry-run        Show what would be installed without actually doing it"
+    echo "  --backup         Backup existing skills before installing"
+    echo "  --force          Force reinstall even if already present"
+    echo "  --dry-run        Show what would be installed without doing it"
     echo "  --verbose        Show detailed output"
-    echo "  --with-ollama    Also install Ollama + pull Eburon model (media-pipe/eburon-sandbox-worker)"
-    echo "  --ollama-only    Only install Ollama + pull Eburon model (skip skills)"
+    echo "  --with-ollama    Also install Ollama + pull Eburon model + OpenCode + eburoncode"
+    echo "  --ollama-only    Only install Ollama + model + OpenCode + eburoncode (skip skills)"
     echo "  --help           Show this help message"
     echo ""
     echo -e "${BOLD}What this installs:${NC}"
@@ -99,6 +101,7 @@ for arg in "$@"; do
     case "$arg" in
         --fresh)        FRESH=true ;;
         --backup)       BACKUP=true ;;
+        --force)        FORCE=true ;;
         --dry-run)      DRY_RUN=true ;;
         --verbose)      VERBOSE=true ;;
         --with-ollama)  WITH_OLLAMA=true ;;
@@ -152,48 +155,55 @@ install_ollama() {
 
     if ollama_installed; then
         local ollama_version=$(ollama --version 2>/dev/null || echo "unknown")
-        success "Ollama already installed (version: $ollama_version)"
-    else
-        step "Installing Ollama on $platform..."
-
-        if [ "$DRY_RUN" = true ]; then
-            info "[DRY RUN] Would install Ollama via: curl -fsSL $OLLAMA_INSTALL_URL | sh"
+        if [ "$FORCE" = true ]; then
+            warn "Force mode — reinstalling Ollama..."
+        else
+            success "Ollama already installed (version: $ollama_version) — skipping"
+            # Still ensure it's running
+            if ! ollama_running; then
+                step "Starting Ollama..."
+                ollama serve >/dev/null 2>&1 &
+                sleep 2
+                ollama_running && success "Ollama started" || warn "Ollama may still be starting..."
+            fi
             return
         fi
-
-        case "$platform" in
-            macOS|Linux)
-                curl -fsSL "$OLLAMA_INSTALL_URL" | sh || {
-                    warn "Ollama install script failed — trying manual install..."
-                    if [ "$platform" = "macOS" ] && command -v brew >/dev/null 2>&1; then
-                        brew install ollama 2>/dev/null || fail "Failed to install Ollama"
-                    else
-                        fail "Failed to install Ollama. Install manually: https://ollama.com/download"
-                    fi
-                }
-                ;;
-            Windows)
-                warn "Windows detected — install Ollama manually: winget install Ollama.Ollama"
-                ;;
-            *)
-                fail "Unsupported platform: $platform. Install manually: https://ollama.com/download"
-                ;;
-        esac
-
-        success "Ollama installed"
     fi
 
+    step "Installing Ollama on $platform..."
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would install Ollama via: curl -fsSL $OLLAMA_INSTALL_URL | sh"
+        return
+    fi
+
+    case "$platform" in
+        macOS|Linux)
+            curl -fsSL "$OLLAMA_INSTALL_URL" | sh || {
+                warn "Ollama install script failed — trying manual install..."
+                if [ "$platform" = "macOS" ] && command -v brew >/dev/null 2>&1; then
+                    brew install ollama 2>/dev/null || fail "Failed to install Ollama"
+                else
+                    fail "Failed to install Ollama. Install manually: https://ollama.com/download"
+                fi
+            }
+            ;;
+        Windows)
+            warn "Windows detected — install Ollama manually: winget install Ollama.Ollama"
+            ;;
+        *)
+            fail "Unsupported platform: $platform. Install manually: https://ollama.com/download"
+            ;;
+    esac
+
+    success "Ollama installed"
+
+    # Start Ollama after fresh install
     if ! ollama_running; then
         step "Starting Ollama..."
-        if [ "$DRY_RUN" = true ]; then
-            info "[DRY RUN] Would start Ollama service"
-        elif pgrep -x ollama >/dev/null 2>&1; then
-            success "Ollama is already running"
-        else
-            ollama serve >/dev/null 2>&1 &
-            sleep 2
-            ollama_running && success "Ollama started" || warn "Ollama may still be starting..."
-        fi
+        ollama serve >/dev/null 2>&1 &
+        sleep 2
+        ollama_running && success "Ollama started" || warn "Ollama may still be starting..."
     else
         success "Ollama is running"
     fi
@@ -213,8 +223,12 @@ pull_eburon_model() {
     fi
 
     if ollama list 2>/dev/null | grep -q "$model"; then
-        success "Model already downloaded: $model"
-        return
+        if [ "$FORCE" = true ]; then
+            warn "Force mode — repulling model..."
+        else
+            success "Model already downloaded: $model — skipping"
+            return
+        fi
     fi
 
     step "Downloading model (1GB — this may take a few minutes)..."
@@ -243,22 +257,27 @@ install_opencode() {
 
     if command -v opencode >/dev/null 2>&1; then
         local ver=$(opencode --version 2>/dev/null || echo "unknown")
-        success "OpenCode CLI already installed (version: $ver)"
-    else
-        step "Installing OpenCode CLI..."
-
-        if [ "$DRY_RUN" = true ]; then
-            info "[DRY RUN] Would run: curl -fsSL $OPENCODE_INSTALL_URL | bash"
+        if [ "$FORCE" = true ]; then
+            warn "Force mode — reinstalling OpenCode CLI..."
+        else
+            success "OpenCode CLI already installed (version: $ver) — skipping"
             return
         fi
-
-        curl -fsSL "$OPENCODE_INSTALL_URL" | bash || {
-            warn "OpenCode install failed. Install manually:"
-            info "  curl -fsSL $OPENCODE_INSTALL_URL | bash"
-            return
-        }
-        success "OpenCode CLI installed"
     fi
+
+    step "Installing OpenCode CLI..."
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would run: curl -fsSL $OPENCODE_INSTALL_URL | bash"
+        return
+    fi
+
+    curl -fsSL "$OPENCODE_INSTALL_URL" | bash || {
+        warn "OpenCode install failed. Install manually:"
+        info "  curl -fsSL $OPENCODE_INSTALL_URL | bash"
+        return
+    }
+    success "OpenCode CLI installed"
 
     # Ensure PATH includes opencode
     if ! command -v opencode >/dev/null 2>&1; then
@@ -374,6 +393,14 @@ install_eburoncode() {
 
     local dest="$HOME/.opencode/bin/eburoncode"
 
+    if [ -x "$dest" ] && [ "$FORCE" != true ]; then
+        success "eburoncode already installed — skipping"
+        echo ""
+        echo -e "  ${CYAN}Launch Eburon-powered OpenCode TUI:${NC}"
+        echo "    eburoncode"
+        return
+    fi
+
     step "Installing eburoncode wrapper..."
 
     if [ "$DRY_RUN" = true ]; then
@@ -449,6 +476,85 @@ count_skills() {
         ls -d "$dir"/*/ 2>/dev/null | wc -l | tr -d ' '
     else
         echo "0"
+    fi
+}
+
+# ── Pre-flight Status Check ──
+preflight_check() {
+    local status=""
+    local all_ok=true
+
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── System Check ───────────────────────────────${NC}"
+
+    # Skills
+    local agent_count=$(count_skills "$AGENTS_DIR")
+    local opencode_count=$(count_skills "$OPENCODE_DIR")
+    if [ "$agent_count" -gt 0 ] || [ "$opencode_count" -gt 0 ]; then
+        echo -e "  ${GREEN}✓${NC} Skills: ${BOLD}$agent_count agent${NC} + ${BOLD}$opencode_count opencode${NC} already installed"
+    else
+        echo -e "  ${YELLOW}○${NC} Skills: not installed"
+        all_ok=false
+    fi
+
+    # Ollama
+    if ollama_installed; then
+        local ollama_ver=$(ollama --version 2>/dev/null || echo "?")
+        local ollama_status="installed"
+        ollama_running && ollama_status="running" || ollama_status="installed (stopped)"
+        echo -e "  ${GREEN}✓${NC} Ollama: $ollama_status (v$ollama_ver)"
+    else
+        echo -e "  ${YELLOW}○${NC} Ollama: not installed"
+        all_ok=false
+    fi
+
+    # Eburon model
+    if ollama_installed && ollama list 2>/dev/null | grep -q "$EBURON_MODEL"; then
+        echo -e "  ${GREEN}✓${NC} Eburon Model: $EBURON_MODEL"
+    elif ollama_installed; then
+        echo -e "  ${YELLOW}○${NC} Eburon Model: not pulled"
+        all_ok=false
+    else
+        echo -e "  ${YELLOW}—${NC} Eburon Model: requires Ollama"
+        all_ok=false
+    fi
+
+    # OpenCode CLI
+    if command -v opencode >/dev/null 2>&1; then
+        local oc_ver=$(opencode --version 2>/dev/null || echo "?")
+        echo -e "  ${GREEN}✓${NC} OpenCode CLI: v$oc_ver"
+    else
+        echo -e "  ${YELLOW}○${NC} OpenCode CLI: not installed"
+        all_ok=false
+    fi
+
+    # eburoncode
+    if [ -x "$HOME/.opencode/bin/eburoncode" ]; then
+        echo -e "  ${GREEN}✓${NC} eburoncode: ~/.opencode/bin/eburoncode"
+    else
+        echo -e "  ${YELLOW}○${NC} eburoncode: not installed"
+        all_ok=false
+    fi
+
+    # OpenCode config
+    if [ -f "$OPENCODE_CONFIG_DIR/opencode.json" ]; then
+        echo -e "  ${GREEN}✓${NC} OpenCode config: ~/.config/opencode/opencode.json"
+    else
+        echo -e "  ${YELLOW}○${NC} OpenCode config: not configured"
+        all_ok=false
+    fi
+
+    if [ "$all_ok" = true ] && [ "$FORCE" != true ]; then
+        echo ""
+        echo -e "${GREEN}${BOLD}  ✅ Everything is already installed!${NC}"
+        echo -e "  ${CYAN}Run with --force to reinstall anyway.${NC}"
+        echo ""
+        exit 0
+    fi
+
+    if [ "$FORCE" = true ]; then
+        echo ""
+        echo -e "  ${YELLOW}⚡ --force: reinstalling everything${NC}"
     fi
 }
 
@@ -623,6 +729,11 @@ main() {
     if [ "$before_total" -gt 0 ] && [ "$SKIP_SKILLS" != true ]; then
         echo -e "${YELLOW}Existing skills found: $before_agents agent + $before_opencode opencode = $before_total total${NC}"
         echo ""
+    fi
+
+    # ── Pre-flight: exit early if everything installed ──
+    if [ "$FRESH" != true ] && [ "$DRY_RUN" != true ]; then
+        preflight_check
     fi
 
     # ── Skills Installation ──
