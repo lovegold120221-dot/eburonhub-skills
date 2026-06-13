@@ -52,6 +52,7 @@ FORCE=false
 WITH_OLLAMA=false
 OLLAMA_ONLY=false
 SKIP_SKILLS=false
+ALL=false
 
 # ── Banner ──
 banner() {
@@ -78,6 +79,7 @@ show_help() {
     echo "  --verbose        Show detailed output"
     echo "  --with-ollama    Also install Ollama + pull Eburon model + OpenCode + eburoncode"
     echo "  --ollama-only    Only install Ollama + model + OpenCode + eburoncode (skip skills)"
+    echo "  --all            Install EVERYTHING: skills + Ollama + OpenCode + Hermes + Superpowers + gstack"
     echo "  --help           Show this help message"
     echo ""
     echo -e "${BOLD}What this installs:${NC}"
@@ -106,6 +108,7 @@ for arg in "$@"; do
         --verbose)      VERBOSE=true ;;
         --with-ollama)  WITH_OLLAMA=true ;;
         --ollama-only)  OLLAMA_ONLY=true; SKIP_SKILLS=true ;;
+        --all)          ALL=true; WITH_OLLAMA=true ;;
         --help)         show_help; exit 0 ;;
         *)              echo -e "${RED}Unknown option: $arg${NC}"; show_help; exit 1 ;;
     esac
@@ -506,6 +509,149 @@ EBURONCODE_EOF
     echo "    export PATH=\$HOME/.opencode/bin:\$PATH"
 }
 
+# ── Install Hermes Agent ──
+install_hermes() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Installing Hermes Agent ─────────────────────${NC}"
+
+    if command -v hermes >/dev/null 2>&1; then
+        local ver=$(hermes --version 2>/dev/null || echo "unknown")
+        if [ "$FORCE" != true ]; then
+            success "Hermes Agent already installed (version: $ver) — skipping"
+            return
+        fi
+        warn "Force mode — reinstalling Hermes..."
+    fi
+
+    step "Installing Hermes Agent (⭐192k, Nous Research)..."
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would install Hermes: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
+        return
+    fi
+
+    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash || {
+        warn "Hermes install failed. Install manually:"
+        info "  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
+        return
+    }
+    success "Hermes Agent installed"
+
+    echo -e "  ${CYAN}Start Hermes:${NC}"
+    echo "    hermes"
+}
+
+# ── Install Superpowers Skills ──
+install_superpowers() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Installing Superpowers ──────────────────────${NC}"
+
+    local dest="$HOME/.agents/skills"
+
+    if [ -d "$dest/brainstorming" ] && [ -f "$dest/brainstorming/SKILL.md" ] && [ "$FORCE" != true ]; then
+        success "Superpowers skills already installed — skipping"
+        return
+    fi
+
+    step "Installing Superpowers (⭐226k, Jesse Vincent)..."
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would install Superpowers from obra/superpowers"
+        return
+    fi
+
+    local tmp=$(mktemp -d)
+    git clone --depth 1 --quiet https://github.com/obra/superpowers.git "$tmp" 2>/dev/null && {
+        mkdir -p "$dest"
+        cp -r "$tmp/skills/"* "$dest/" 2>/dev/null
+        rm -rf "$tmp"
+        success "Superpowers skills installed (brainstorming, TDD, subagent-driven-dev, etc.)"
+    } || {
+        rm -rf "$tmp"
+        warn "Superpowers install failed — clone manually:"
+        info "  git clone https://github.com/obra/superpowers.git"
+    }
+}
+
+# ── Install gstack Skills ──
+install_gstack_skills() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Installing gstack ───────────────────────────${NC}"
+
+    local dest="$HOME/.agents/skills"
+
+    if [ -d "$dest/qa" ] && [ -f "$dest/qa/SKILL.md" ] && [ "$FORCE" != true ]; then
+        success "gstack skills already installed — skipping"
+        return
+    fi
+
+    step "Installing gstack (⭐110k, Garry Tan / YC)..."
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would install gstack from garrytan/gstack"
+        return
+    fi
+
+    local tmp=$(mktemp -d)
+    git clone --depth 1 --filter=blob:none --quiet https://github.com/garrytan/gstack.git "$tmp" 2>/dev/null && {
+        mkdir -p "$dest"
+        # Install the gstack skills
+        for skill in "$tmp/.agents/skills/"*/; do
+            [ -d "$skill" ] || continue
+            local name=$(basename "$skill")
+            [ -e "$dest/$name" ] || cp -r "$skill" "$dest/$name" 2>/dev/null
+        done
+        rm -rf "$tmp"
+        success "gstack skills installed (qa, review, ship, office-hours, etc.)"
+    } || {
+        rm -rf "$tmp"
+        warn "gstack install failed — clone manually:"
+        info "  git clone https://github.com/garrytan/gstack.git"
+    }
+}
+
+# ── Detect & Report Available Coding Agents ──
+detect_agents() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Coding Agents Detected ──────────────────────${NC}"
+
+    local found=0
+
+    if command -v claude >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Claude Code: $(claude --version 2>/dev/null || echo 'installed')"
+        found=$((found + 1))
+    fi
+    if command -v codex >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Codex CLI: $(codex --version 2>/dev/null || echo 'installed')"
+        found=$((found + 1))
+    fi
+    if command -v hermes >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Hermes Agent: $(hermes --version 2>/dev/null || echo 'installed')"
+        found=$((found + 1))
+    fi
+    if command -v opencode >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} OpenCode: $(opencode --version 2>/dev/null || echo 'installed')"
+        found=$((found + 1))
+    fi
+    if command -v gemini >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Gemini CLI: installed"
+        found=$((found + 1))
+    fi
+    if command -v cursor >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Cursor: installed"
+        found=$((found + 1))
+    fi
+
+    if [ "$found" -eq 0 ]; then
+        echo -e "  ${YELLOW}○${NC} No coding agents detected"
+        echo -e "  ${CYAN}Available agents:${NC}"
+        echo "    Claude Code:  npm install -g @anthropic-ai/claude-code"
+        echo "    Codex CLI:    npm install -g @openai/codex"
+        echo "    Hermes Agent: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
+        echo "    Gemini CLI:   npm install -g @anthropic-ai/gemini-cli"
+    fi
+}
+
 # ── Print Step ──
 step()       { echo -e "${BLUE}→${NC} $1"; }
 success()    { echo -e "${GREEN}  ✓${NC} $1"; }
@@ -813,13 +959,23 @@ main() {
     fi
 
     # ── Ollama + Eburon Model + OpenCode CLI ──
-    if [ "$WITH_OLLAMA" = true ] || [ "$OLLAMA_ONLY" = true ]; then
+    if [ "$WITH_OLLAMA" = true ] || [ "$OLLAMA_ONLY" = true ] || [ "$ALL" = true ]; then
         install_ollama
         pull_eburon_model
         install_opencode
         configure_opencode_eburon
         install_eburoncode
     fi
+
+    # ── All Extras (--all) ──
+    if [ "$ALL" = true ]; then
+        install_hermes
+        install_superpowers
+        install_gstack_skills
+    fi
+
+    # ── Always detect agents ──
+    detect_agents
 
     if [ "$SKIP_SKILLS" != true ]; then
         show_next_steps
