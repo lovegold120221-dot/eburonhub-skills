@@ -178,7 +178,8 @@ launch_agent() {
         cp "$HOME/.agents/AGENTS.md" ./AGENTS.md 2>/dev/null || true
     fi
 
-    exec "$bin" "${args[@]}"
+    # Launch using ollama launch for robust model injection
+    exec ollama launch opencode --model "$EBURON_MODEL" "${args[@]}"
 }
 
 # ── Show status ──

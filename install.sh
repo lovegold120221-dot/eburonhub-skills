@@ -461,19 +461,27 @@ ollama list 2>/dev/null | grep -q "$EBURON_MODEL" || {
     echo "Pulling $EBURON_MODEL (1GB)..."
     ollama pull "$EBURON_MODEL"
 }
-# Ensure config
+# Ensure config & Self-healing cleanup
 mkdir -p ~/.config/opencode
-[ -f ~/.config/opencode/opencode.json ] || cat > ~/.config/opencode/opencode.json <<CFG
+CFG_FILE=~/.config/opencode/opencode.json
+if [ -f "$CFG_FILE" ]; then
+    if grep -q '"fallback"' "$CFG_FILE"; then
+        echo "Cleaning invalid config key 'fallback'..."
+        python3 -c "import json, os; f=os.path.expanduser('$CFG_FILE'); d=json.load(open(f)); d.pop('fallback', None); json.dump(d, open(f, 'w'), indent=2)"
+    fi
+else
+    cat > "$CFG_FILE" <<CFG
 {
   "provider": "ollama",
   "model": "$EBURON_MODEL",
   "ollama": { "url": "http://localhost:11434" }
 }
 CFG
+fi
 echo "Provider: ollama"
 echo "Model:    $EBURON_MODEL"
 echo ""
-exec opencode "$@"
+exec ollama launch opencode --model "$EBURON_MODEL" "$@"
 EBURONCODE_EOF
     fi
 
