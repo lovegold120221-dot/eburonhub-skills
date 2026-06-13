@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── EburonHub Skills Installer ──────────────────────────────────────
+# Installs 139+ AI agent skills from the EburonHub skills repository.
+# Repository: https://github.com/lovegold120221-dot/eburonhub-skills.git
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/lovegold120221-dot/eburonhub-skills/main/install.sh | bash
+#
+#   # Or run locally:
+#   chmod +x install.sh && ./install.sh
+#
+#   # Options:
+#   ./install.sh --fresh     # Clean install (removes existing skills first)
+#   ./install.sh --backup    # Backup existing skills before installing
+#   ./install.sh --dry-run   # Show what would be installed without doing it
+#   ./install.sh --help      # Show help
+# ───────────────────────────────────────────────────────────────────────
+
+# ── Colors ──
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# ── Configuration ──
+REPO_URL="https://github.com/lovegold120221-dot/eburonhub-skills.git"
+REPO_NAME="eburonhub-skills"
+TEMP_DIR="${TMPDIR:-/tmp}/$REPO_NAME-$$"
+AGENTS_DIR="${HOME}/.agents/skills"
+OPENCODE_DIR="${HOME}/.opencode/skills"
+BACKUP_DIR="${HOME}/.agents/skills-backup-$(date +%Y%m%d-%H%M%S)"
+
+# ── Flags ──
+FRESH=false
+BACKUP=false
+DRY_RUN=false
+VERBOSE=false
+
+# ── Banner ──
+banner() {
+    echo -e "${CYAN}${BOLD}"
+    echo "  ╔═══════════════════════════════════════════╗"
+    echo "  ║      🎯 EburonHub Skills Installer       ║"
+    echo "  ║     AI Agent Skills · 139+ Skills        ║"
+    echo "  ╚═══════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+# ── Help ──
+show_help() {
+    banner
+    echo -e "${BOLD}Usage:${NC}"
+    echo "  curl -fsSL https://raw.githubusercontent.com/lovegold120221-dot/eburonhub-skills/main/install.sh | bash"
+    echo "  ./install.sh [options]"
+    echo ""
+    echo -e "${BOLD}Options:${NC}"
+    echo "  --fresh       Clean install — removes existing skills first"
+    echo "  --backup      Backup existing skills to ~/.agents/skills-backup-YYYYMMDD-HHMMSS/"
+    echo "  --dry-run     Show what would be installed without actually doing it"
+    echo "  --verbose     Show detailed output"
+    echo "  --help        Show this help message"
+    echo ""
+    echo -e "${BOLD}What this installs:${NC}"
+    echo "  ~/.agents/skills/     — 121+ agent skills (Azure, edge LLM, workflow, design, etc.)"
+    echo "  ~/.opencode/skills/   — 18+ opencode skills (video, browser, PWA, etc.)"
+    echo ""
+    echo -e "${BOLD}After install:${NC}"
+    echo "  Skills load automatically in your AI agents when you invoke them by name."
+    echo "  Run: ls ~/.agents/skills/ && ls ~/.opencode/skills/"
+}
+
+# ── Parse Arguments ──
+for arg in "$@"; do
+    case "$arg" in
+        --fresh)    FRESH=true ;;
+        --backup)   BACKUP=true ;;
+        --dry-run)  DRY_RUN=true ;;
+        --verbose)  VERBOSE=true ;;
+        --help)     show_help; exit 0 ;;
+        *)          echo -e "${RED}Unknown option: $arg${NC}"; show_help; exit 1 ;;
+    esac
+done
+
+# ── Check Dependencies ──
+check_deps() {
+    local missing=()
+    command -v git >/dev/null 2>&1 || missing+=("git")
+    command -v cp >/dev/null 2>&1 || missing+=("cp")
+    command -v mkdir >/dev/null 2>&1 || missing+=("mkdir")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${RED}✗ Missing dependencies: ${missing[*]}${NC}"
+        echo "Please install them and try again."
+        exit 1
+    fi
+}
+
+# ── Print Step ──
+step()       { echo -e "${BLUE}→${NC} $1"; }
+success()    { echo -e "${GREEN}  ✓${NC} $1"; }
+warn()       { echo -e "${YELLOW}  ⚠${NC} $1"; }
+fail()       { echo -e "${RED}  ✗${NC} $1"; exit 1; }
+info()       { [ "$VERBOSE" = true ] && echo -e "    $1" || true; }
+
+# ── Count Skills ──
+count_skills() {
+    local dir="$1"
+    if [ -d "$dir" ]; then
+        ls -d "$dir"/*/ 2>/dev/null | wc -l | tr -d ' '
+    else
+        echo "0"
+    fi
+}
+
+# ── Backup Existing Skills ──
+backup_existing() {
+    local backup_needed=false
+    [ -d "$AGENTS_DIR" ] && [ "$(count_skills "$AGENTS_DIR")" -gt 0 ] && backup_needed=true
+    [ -d "$OPENCODE_DIR" ] && [ "$(count_skills "$OPENCODE_DIR")" -gt 0 ] && backup_needed=true
+
+    if [ "$backup_needed" = false ]; then
+        info "No existing skills to backup"
+        return
+    fi
+
+    step "Backing up existing skills to $BACKUP_DIR"
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would backup to: $BACKUP_DIR"
+        return
+    fi
+
+    mkdir -p "$BACKUP_DIR"
+    [ -d "$AGENTS_DIR" ] && cp -r "$AGENTS_DIR" "$BACKUP_DIR/agents" 2>/dev/null || true
+    [ -d "$OPENCODE_DIR" ] && cp -r "$OPENCODE_DIR" "$BACKUP_DIR/opencode" 2>/dev/null || true
+    success "Backed up to $BACKUP_DIR"
+}
+
+# ── Clean Existing Skills ──
+clean_existing() {
+    if [ -d "$AGENTS_DIR" ]; then
+        step "Removing existing agent skills..."
+        if [ "$DRY_RUN" = true ]; then
+            info "[DRY RUN] Would remove: $AGENTS_DIR"
+        else
+            rm -rf "$AGENTS_DIR"
+            success "Cleaned $AGENTS_DIR"
+        fi
+    fi
+
+    if [ -d "$OPENCODE_DIR" ]; then
+        step "Removing existing opencode skills..."
+        if [ "$DRY_RUN" = true ]; then
+            info "[DRY RUN] Would remove: $OPENCODE_DIR"
+        else
+            rm -rf "$OPENCODE_DIR"
+            success "Cleaned $OPENCODE_DIR"
+        fi
+    fi
+}
+
+# ── Clone Repository ──
+clone_repo() {
+    step "Cloning $REPO_URL ..."
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would clone to: $TEMP_DIR"
+        return
+    fi
+
+    rm -rf "$TEMP_DIR"
+    git clone --depth 1 --quiet "$REPO_URL" "$TEMP_DIR" 2>&1 || {
+        fail "Failed to clone repository. Check your internet connection."
+    }
+    success "Cloned repository"
+}
+
+# ── Install Skills ──
+install_skills() {
+    local src="$1"
+    local dest="$2"
+    local label="$3"
+
+    step "Installing $label skills..."
+
+    if [ ! -d "$src" ]; then
+        warn "Source directory not found: $src — skipping"
+        return
+    fi
+
+    local count_in=$(count_skills "$src")
+    info "Found $count_in skills in source"
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would copy $count_in skills to: $dest"
+        return
+    fi
+
+    mkdir -p "$dest"
+
+    local installed=0
+    local skipped=0
+    local failed=0
+
+    for skill_dir in "$src"/*/; do
+        [ -d "$skill_dir" ] || continue
+        local skill_name=$(basename "$skill_dir")
+
+        if [ -f "$skill_dir/SKILL.md" ]; then
+            if [ -d "$dest/$skill_name" ]; then
+                rm -rf "$dest/$skill_name"
+            fi
+            cp -r "$skill_dir" "$dest/$skill_name" && {
+                installed=$((installed + 1))
+                info "  Installed: $skill_name"
+            } || {
+                failed=$((failed + 1))
+                warn "  Failed: $skill_name"
+            }
+        else
+            skipped=$((skipped + 1))
+            info "  Skipped (no SKILL.md): $skill_name"
+        fi
+    done
+
+    echo -e "${GREEN}  ✓ $label: $installed installed${NC}$([ "$skipped" -gt 0 ] && echo -e "${YELLOW}, $skipped skipped${NC}")$([ "$failed" -gt 0 ] && echo -e "${RED}, $failed failed${NC}")"
+}
+
+# ── Verify Installation ──
+verify_install() {
+    step "Verifying installation..."
+    
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would verify installation"
+        return
+    fi
+
+    local total=0
+    local agent_count=$(count_skills "$AGENTS_DIR")
+    local opencode_count=$(count_skills "$OPENCODE_DIR")
+    total=$((agent_count + opencode_count))
+
+    echo ""
+    echo -e "  ${CYAN}~/.agents/skills/${NC}   → ${BOLD}$agent_count${NC} skills"
+    echo -e "  ${CYAN}~/.opencode/skills/${NC} → ${BOLD}$opencode_count${NC} skills"
+    echo -e "  ${CYAN}Total${NC}             → ${BOLD}$total${NC} skills"
+    echo ""
+}
+
+# ── Show Next Steps ──
+show_next_steps() {
+    echo -e "${BOLD}${GREEN}╔═══════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${GREEN}║   ✓ Installation Complete!               ║${NC}"
+    echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${BOLD}Next Steps:${NC}"
+    echo "  • Skills are now available in your AI agents"
+    echo "  • List all skills:  ls ~/.agents/skills/"
+    echo "  • Use the orchestrator: invoke 'skill-orchestrator' in any agent"
+    echo "  • Update skills:    re-run this installer"
+    echo ""
+    [ "$BACKUP" = true ] && echo -e "  ${YELLOW}Backup saved at: $BACKUP_DIR${NC}"
+}
+
+# ── Cleanup ──
+cleanup() {
+    if [ -d "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+        info "Cleaned up temp directory"
+    fi
+}
+trap cleanup EXIT
+
+# ─── Main ──────────────────────────────────────────────────────────────
+main() {
+    banner
+    
+    check_deps
+
+    # Show existing counts
+    local before_agents=$(count_skills "$AGENTS_DIR")
+    local before_opencode=$(count_skills "$OPENCODE_DIR")
+    local before_total=$((before_agents + before_opencode))
+    
+    if [ "$before_total" -gt 0 ]; then
+        echo -e "${YELLOW}Existing skills found: $before_agents agent + $before_opencode opencode = $before_total total${NC}"
+        echo ""
+    fi
+
+    # Handle fresh install
+    if [ "$FRESH" = true ]; then
+        step "Fresh install mode — removing existing skills"
+        $BACKUP && backup_existing
+        clean_existing
+    elif [ "$BACKUP" = true ]; then
+        backup_existing
+    fi
+
+    # Clone and install
+    clone_repo
+
+    install_skills "$TEMP_DIR/.agents/skills" "$AGENTS_DIR" "Agent"
+    install_skills "$TEMP_DIR/.opencode/skills" "$OPENCODE_DIR" "OpenCode"
+
+    verify_install
+    show_next_steps
+}
+
+main
