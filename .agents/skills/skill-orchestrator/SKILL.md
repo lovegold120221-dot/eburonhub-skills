@@ -67,7 +67,7 @@ Parse the user's request into one or more of these domains:
 |--------|---------------|
 | 🎬 AI Video/Media | `ai-video-generation`, `ai-video-cinema`, `ai-video-production`, `tiktok-contents` |
 | 🤖 AI/ML Models | `open-search-code-lm`, `gemini-api-dev`, `gemini-interactions-api`, `finetuning` |
-| 🖥️ Edge/Offline LLM | `edge-ollama`, `edge-llama-cpp`, `edge-vllm`, `edge-exo`, `edge-jan`, `edge-mlc-llm`, `edge-llamafile`, `edge-open-webui`, `edge-langchain`, `edge-candle`, `edge-transformers-js`, `edge-tensorrt-llm`, `edge-gpt4all` |
+| 🖥️ Edge/Offline LLM | `edge-ollama`, `edge-ollama-agents`, `edge-llama-cpp`, `edge-vllm`, `edge-exo`, `edge-jan`, `edge-mlc-llm`, `edge-llamafile`, `edge-open-webui`, `edge-langchain`, `edge-candle`, `edge-transformers-js`, `edge-tensorrt-llm`, `edge-gpt4all` |
 | 🌐 Web/Frontend | `mobile-pwa-design`, `design-html`, `design-shotgun`, `design-review`, `flutter-dev` |
 | ☁️ Cloud/Infra | `azure-prepare`, `azure-deploy`, `azure-kubernetes`, `azure-enterprise-infra-planner` |
 | 🔧 Full-Stack App | `full-app-development`, `autonomous-app-generator` |
