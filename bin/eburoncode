@@ -90,23 +90,39 @@ build_skill_index() {
 bootstrap_project() {
     local project_dir="${1:-$(pwd)}"
     
-    # Install AGENTS.md if missing
-    if [ ! -f "$project_dir/AGENTS.md" ] && [ -f "$AGENTS_TEMPLATE" ]; then
-        cp "$AGENTS_TEMPLATE" "$project_dir/AGENTS.md"
-        echo -e "${GREEN}✓ Created AGENTS.md with skill routing rules${NC}"
-    elif [ -f "$project_dir/AGENTS.md" ]; then
-        echo -e "${DIM}  AGENTS.md exists${NC}"
+    # Install/update AGENTS.md
+    if [ -f "$AGENTS_TEMPLATE" ]; then
+        if [ ! -f "$project_dir/AGENTS.md" ]; then
+            cp "$AGENTS_TEMPLATE" "$project_dir/AGENTS.md"
+            echo -e "${GREEN}✓ Created AGENTS.md with skill routing rules${NC}"
+        elif ! grep -q "Progressive Disclosure Rule" "$project_dir/AGENTS.md" 2>/dev/null; then
+            # Existing AGENTS.md but doesn't have skill routing — append it
+            echo "" >> "$project_dir/AGENTS.md"
+            cat "$AGENTS_TEMPLATE" >> "$project_dir/AGENTS.md"
+            echo -e "${GREEN}✓ Patched AGENTS.md with skill routing rules${NC}"
+        else
+            echo -e "${DIM}  AGENTS.md OK${NC}"
+        fi
     fi
 
-    # Ensure .agents/skills directory
+    # Ensure .agents/skills directory exists in project
     mkdir -p "$project_dir/.agents/skills"
+    
+    # Symlink user skills into project if not already present
+    if [ ! -d "$project_dir/.agents/skills/skill-orchestrator" ] && [ -d "$AG_SKILLS" ]; then
+        for skill_dir in "$AG_SKILLS"/*/; do
+            local name=$(basename "$skill_dir")
+            [ -e "$project_dir/.agents/skills/$name" ] || ln -sf "$skill_dir" "$project_dir/.agents/skills/$name" 2>/dev/null
+        done
+    fi
 }
 
-# ── Ensure OpenCode config references AGENTS.md ──
+# ── Ensure OpenCode config is fully wired for skills ──
 ensure_config() {
     local config_file="$HOME/.config/opencode/opencode.json"
     mkdir -p "$(dirname "$config_file")"
 
+    # Create from scratch if missing
     if [ ! -f "$config_file" ]; then
         cat > "$config_file" <<EOF
 {
@@ -118,7 +134,52 @@ ensure_config() {
 }
 EOF
         echo -e "${GREEN}✓ OpenCode config created${NC}"
+        return
     fi
+
+    # Config exists — patch missing keys using python3
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${DIM}  Config exists (no python3 to patch)${NC}"
+        return
+    fi
+
+    local status
+    status=$(python3 -c "
+import json
+with open('$config_file') as f:
+    cfg = json.load(f)
+changed = False
+if 'instructions' not in cfg:
+    cfg['instructions'] = ['AGENTS.md', '~/.config/opencode/developer.md']
+    changed = True
+elif 'AGENTS.md' not in cfg.get('instructions', []):
+    cfg['instructions'] = ['AGENTS.md'] + [i for i in cfg.get('instructions', []) if i != 'AGENTS.md']
+    if '~/.config/opencode/developer.md' not in cfg['instructions']:
+        cfg['instructions'].append('~/.config/opencode/developer.md')
+    changed = True
+if 'skills' not in cfg:
+    cfg['skills'] = {'paths': ['~/.opencode/skills', '~/.agents/skills']}
+    changed = True
+else:
+    paths = cfg['skills'].get('paths', [])
+    for p in ['~/.opencode/skills', '~/.agents/skills']:
+        if p not in paths:
+            paths.append(p)
+            changed = True
+    cfg['skills']['paths'] = paths
+if changed:
+    with open('$config_file', 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print('patched')
+else:
+    print('ok')
+" 2>/dev/null)
+
+    case "$status" in
+        patched) echo -e "${GREEN}✓ OpenCode config patched — AGENTS.md + skills paths${NC}" ;;
+        ok)      echo -e "${DIM}  OpenCode config OK${NC}" ;;
+        *)       echo -e "${DIM}  OpenCode config checked${NC}" ;;
+    esac
 }
 
 # ── Show status ──
