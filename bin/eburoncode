@@ -122,63 +122,95 @@ ensure_config() {
     local config_file="$HOME/.config/opencode/opencode.json"
     mkdir -p "$(dirname "$config_file")"
 
-    # Create from scratch if missing
+    # Create from scratch if missing — MUST be complete enough for OpenCode server
     if [ ! -f "$config_file" ]; then
-        cat > "$config_file" <<EOF
+        cat > "$config_file" <<'EOF'
 {
-  "provider": "ollama",
-  "model": "$EBURON_MODEL",
-  "instructions": ["AGENTS.md", "~/.config/opencode/developer.md"],
-  "skills": { "paths": ["~/.opencode/skills", "~/.agents/skills"] },
-  "ollama": { "url": "$OLLAMA_URL" }
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md",
+    "~/.config/opencode/developer.md"
+  ],
+  "model": "media-pipe/eburon-sandbox-worker",
+  "skills": {
+    "paths": [
+      "~/.opencode/skills",
+      "~/.agents/skills"
+    ]
+  },
+  "provider": {
+    "ollama": {
+      "name": "Ollama",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:11434/v1"
+      },
+      "models": {
+        "eburon": {
+          "name": "media-pipe/eburon-sandbox-worker"
+        }
+      }
+    }
+  },
+  "disabled_providers": []
 }
 EOF
         echo -e "${GREEN}✓ OpenCode config created${NC}"
         return
     fi
 
-    # Config exists — patch missing keys using python3
+    # Config exists — only ADD missing keys, never restructure
     if ! command -v python3 >/dev/null 2>&1; then
-        echo -e "${DIM}  Config exists (no python3 to patch)${NC}"
+        echo -e "${DIM}  Config exists (no python3)${NC}"
         return
     fi
 
     local status
-    status=$(python3 -c "
-import json
-with open('$config_file') as f:
+    status=$(python3 <<'PYEOF'
+import json, os
+
+cfg_file = os.path.expanduser("~/.config/opencode/opencode.json")
+with open(cfg_file) as f:
     cfg = json.load(f)
+
 changed = False
-if 'instructions' not in cfg:
-    cfg['instructions'] = ['AGENTS.md', '~/.config/opencode/developer.md']
+
+# Only ADD keys that are completely missing — never replace or restructure
+if "instructions" not in cfg:
+    cfg["instructions"] = ["AGENTS.md"]
     changed = True
-elif 'AGENTS.md' not in cfg.get('instructions', []):
-    cfg['instructions'] = ['AGENTS.md'] + [i for i in cfg.get('instructions', []) if i != 'AGENTS.md']
-    if '~/.config/opencode/developer.md' not in cfg['instructions']:
-        cfg['instructions'].append('~/.config/opencode/developer.md')
+elif isinstance(cfg.get("instructions"), list):
+    # Only inject AGENTS.md if instructions exist but don't have it
+    if "AGENTS.md" not in cfg["instructions"]:
+        cfg["instructions"] = ["AGENTS.md"] + cfg["instructions"]
+        changed = True
+
+# Only add skills.paths if the key is completely missing
+if "skills" not in cfg:
+    cfg["skills"] = {"paths": ["~/.opencode/skills", "~/.agents/skills"]}
     changed = True
-if 'skills' not in cfg:
-    cfg['skills'] = {'paths': ['~/.opencode/skills', '~/.agents/skills']}
-    changed = True
-else:
-    paths = cfg['skills'].get('paths', [])
-    for p in ['~/.opencode/skills', '~/.agents/skills']:
+elif isinstance(cfg.get("skills"), dict):
+    paths = cfg["skills"].get("paths", [])
+    for p in ["~/.opencode/skills", "~/.agents/skills"]:
         if p not in paths:
             paths.append(p)
             changed = True
-    cfg['skills']['paths'] = paths
+    if paths != cfg["skills"].get("paths", []):
+        cfg["skills"]["paths"] = paths
+
 if changed:
-    with open('$config_file', 'w') as f:
+    with open(cfg_file, "w") as f:
         json.dump(cfg, f, indent=2)
-    print('patched')
+    print("patched")
 else:
-    print('ok')
-" 2>/dev/null)
+    print("ok")
+PYEOF
+    )
 
     case "$status" in
-        patched) echo -e "${GREEN}✓ OpenCode config patched — AGENTS.md + skills paths${NC}" ;;
-        ok)      echo -e "${DIM}  OpenCode config OK${NC}" ;;
-        *)       echo -e "${DIM}  OpenCode config checked${NC}" ;;
+        patched) echo -e "${GREEN}✓ Config patched — AGENTS.md + skills paths${NC}" ;;
+        ok)      echo -e "${DIM}  Config OK${NC}" ;;
+        *)       echo -e "${DIM}  Config checked${NC}" ;;
     esac
 }
 
