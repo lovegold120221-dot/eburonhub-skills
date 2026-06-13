@@ -9,19 +9,26 @@
 
 ## Installation
 
-### Clone & Install All Skills
+### 🚀 One-Line Installer (Recommended)
 
 ```bash
-# Clone the repo
+curl -fsSL https://raw.githubusercontent.com/lovegold120221-dot/eburonhub-skills/main/install.sh | bash
+```
+
+Options:
+```bash
+curl -fsSL .../install.sh | bash -s -- --fresh     # Clean install
+curl -fsSL .../install.sh | bash -s -- --backup    # Backup existing first
+curl -fsSL .../install.sh | bash -s -- --dry-run   # Preview only
+curl -fsSL .../install.sh | bash -s -- --verbose   # Detailed output
+```
+
+### Manual Clone & Install
+
+```bash
 git clone https://github.com/lovegold120221-dot/eburonhub-skills.git /tmp/eburonhub-skills
-
-# Install agent skills (.agents/)
 cp -r /tmp/eburonhub-skills/.agents/skills/* ~/.agents/skills/
-
-# Install opencode skills (.opencode/)
 cp -r /tmp/eburonhub-skills/.opencode/skills/* ~/.opencode/skills/
-
-# Verify
 echo "Agent skills: $(ls -d ~/.agents/skills/*/ | wc -l)"
 echo "OpenCode skills: $(ls -d ~/.opencode/skills/*/ | wc -l)"
 ```
