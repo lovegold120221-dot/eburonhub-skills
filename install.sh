@@ -87,6 +87,7 @@ show_help() {
     echo "  opencode              — OpenCode CLI (AI coding agent in terminal)"
     echo "  $EBURON_MODEL         — Eburon AI sandbox model (1GB, vision + tools, 256K ctx)"
     echo "  ~/.config/opencode/   — Configured to use Eburon model as default"
+    echo "  eburoncode            — Launch command: 'eburoncode' anywhere to start"
     echo ""
     echo -e "${BOLD}After install:${NC}"
     echo "  Skills load automatically in your AI agents when you invoke them by name."
@@ -366,6 +367,74 @@ EOF
     echo "    opencode"
 }
 
+# ── Install eburoncode Command ──
+install_eburoncode() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Installing eburoncode Command ───────────────${NC}"
+
+    local dest="$HOME/.opencode/bin/eburoncode"
+
+    step "Installing eburoncode wrapper..."
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would install eburoncode to: $dest"
+        return
+    fi
+
+    mkdir -p "$(dirname "$dest")"
+
+    # Write the eburoncode script from the repo copy or embed inline
+    if [ -f "$TEMP_DIR/bin/eburoncode" ]; then
+        cp "$TEMP_DIR/bin/eburoncode" "$dest"
+    else
+        # Inline fallback — minimal version
+        cat > "$dest" << 'EBURONCODE_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+EBURON_MODEL="${EBURON_MODEL:-media-pipe/eburon-sandbox-worker}"
+echo -e "\033[0;36m\033[1m  ╔═══════════════════════════════════════════╗"
+echo "  ║     🤖 eburoncode — Eburon AI + OpenCode ║"
+echo -e "  ╚═══════════════════════════════════════════╝\033[0m"
+# Ensure Ollama
+curl -s --max-time 2 http://localhost:11434/api/tags >/dev/null 2>&1 || {
+    ollama serve >/dev/null 2>&1 & sleep 2
+}
+# Ensure model
+ollama list 2>/dev/null | grep -q "$EBURON_MODEL" || {
+    echo "Pulling $EBURON_MODEL (1GB)..."
+    ollama pull "$EBURON_MODEL"
+}
+# Ensure config
+mkdir -p ~/.config/opencode
+[ -f ~/.config/opencode/opencode.json ] || cat > ~/.config/opencode/opencode.json <<CFG
+{
+  "provider": "ollama",
+  "model": "$EBURON_MODEL",
+  "ollama": { "url": "http://localhost:11434" }
+}
+CFG
+echo "Provider: ollama"
+echo "Model:    $EBURON_MODEL"
+echo ""
+exec opencode "$@"
+EBURONCODE_EOF
+    fi
+
+    chmod 755 "$dest"
+    success "eburoncode installed to: $dest"
+
+    # Add to PATH hint if not already
+    echo ""
+    echo -e "  ${CYAN}Launch Eburon-powered OpenCode TUI:${NC}"
+    echo "    eburoncode"
+    echo ""
+    echo -e "  ${CYAN}Or with a project:${NC}"
+    echo "    eburoncode /path/to/project"
+    echo ""
+    echo -e "  ${YELLOW}If 'eburoncode' not found, add to PATH:${NC}"
+    echo "    export PATH=\$HOME/.opencode/bin:\$PATH"
+}
+
 # ── Print Step ──
 step()       { echo -e "${BLUE}→${NC} $1"; }
 success()    { echo -e "${GREEN}  ✓${NC} $1"; }
@@ -578,6 +647,7 @@ main() {
         pull_eburon_model
         install_opencode
         configure_opencode_eburon
+        install_eburoncode
     fi
 
     if [ "$SKIP_SKILLS" != true ]; then
