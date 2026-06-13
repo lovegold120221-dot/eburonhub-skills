@@ -34,6 +34,25 @@ The `last30days` research feeds into every downstream skill decision. Skipping i
 
 ## Orchestration Pipeline
 
+### How Skills Are Activated (Codex-Style)
+
+Skills use **progressive disclosure** — you see name + description first, and load the full SKILL.md only when the skill matches the task.
+
+**Explicit invocation:** User says `$skill-name` or "use skill-name":
+```
+$edge-ollama run llama3 locally
+use gstack-suite to ship this feature
+```
+→ Load that skill's full SKILL.md immediately.
+
+**Implicit invocation:** Task intent matches a skill's description trigger words:
+```
+"build me a dashboard"        → matches edge-langchain + design-html
+"debug this crash"            → matches investigate + systematic-debugging
+"ship this to production"     → matches ship + land-and-deploy
+```
+→ Scan skill descriptions, match trigger words, load matched skills.
+
 ### Phase 0: last30days — ALWAYS FIRST
 ```
 Skill: last30days
