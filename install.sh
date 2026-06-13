@@ -39,6 +39,7 @@ BACKUP_DIR="${HOME}/.agents/skills-backup-$(date +%Y%m%d-%H%M%S)"
 
 # Eburon model configuration
 EBURON_MODEL="media-pipe/eburon-sandbox-worker"
+FALLBACK_MODEL="deepseek-v4-flash"
 OLLAMA_INSTALL_URL="https://ollama.com/install.sh"
 OPENCODE_INSTALL_URL="https://opencode.ai/install"
 OPENCODE_CONFIG_DIR="${HOME}/.config/opencode"
@@ -253,6 +254,32 @@ pull_eburon_model() {
     echo "    ollama launch hermes --model $model"
 }
 
+# ── Pull DeepSeek Fallback Model ──
+pull_fallback_model() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Pulling DeepSeek Fallback ────────────────────${NC}"
+
+    local model="$FALLBACK_MODEL"
+    step "Model: $model (automatic alternative to Eburon)"
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would run: ollama pull $model"
+        return
+    fi
+
+    if ollama list 2>/dev/null | grep -q "$model"; then
+        success "Fallback model already pulled: $model — skipping"
+        return
+    fi
+
+    step "Downloading fallback model..."
+    if ollama pull "$model" 2>&1; then
+        success "Fallback model pulled: $model"
+    else
+        warn "Fallback model pull failed. Pull it manually: ollama pull $model"
+    fi
+}
+
 # ── Install OpenCode CLI ──
 install_opencode() {
     echo ""
@@ -346,6 +373,10 @@ cfg = {
             "models": {model: {"name": model}}
         }
     },
+    "fallback": {
+        "enabled": True,
+        "models": ["$FALLBACK_MODEL", "$EBURON_MODEL"]
+    },
     "disabled_providers": existing.get("disabled_providers", [])
 }
 
@@ -376,6 +407,10 @@ PYEOF
       "options": { "baseURL": "http://127.0.0.1:11434/v1" },
       "models": { "$model": { "name": "$model" } }
     }
+  },
+  "fallback": {
+    "enabled": true,
+    "models": ["$FALLBACK_MODEL", "$EBURON_MODEL"]
   },
   "disabled_providers": []
 }
@@ -962,6 +997,7 @@ main() {
     if [ "$WITH_OLLAMA" = true ] || [ "$OLLAMA_ONLY" = true ] || [ "$ALL" = true ]; then
         install_ollama
         pull_eburon_model
+        pull_fallback_model
         install_opencode
         configure_opencode_eburon
         install_eburoncode
