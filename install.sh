@@ -12,10 +12,12 @@ set -euo pipefail
 #   chmod +x install.sh && ./install.sh
 #
 #   # Options:
-#   ./install.sh --fresh     # Clean install (removes existing skills first)
-#   ./install.sh --backup    # Backup existing skills before installing
-#   ./install.sh --dry-run   # Show what would be installed without doing it
-#   ./install.sh --help      # Show help
+#   ./install.sh --fresh          # Clean install (removes existing skills first)
+#   ./install.sh --backup         # Backup existing skills before installing
+#   ./install.sh --dry-run        # Show what would be installed without doing it
+#   ./install.sh --with-ollama    # Also install Ollama + pull Eburon model
+#   ./install.sh --ollama-only    # Only install Ollama + model (skip skills)
+#   ./install.sh --help           # Show help
 # ───────────────────────────────────────────────────────────────────────
 
 # ── Colors ──
@@ -35,11 +37,18 @@ AGENTS_DIR="${HOME}/.agents/skills"
 OPENCODE_DIR="${HOME}/.opencode/skills"
 BACKUP_DIR="${HOME}/.agents/skills-backup-$(date +%Y%m%d-%H%M%S)"
 
+# Eburon model configuration
+EBURON_MODEL="media-pipe/eburon-sandbox-worker"
+OLLAMA_INSTALL_URL="https://ollama.com/install.sh"
+
 # ── Flags ──
 FRESH=false
 BACKUP=false
 DRY_RUN=false
 VERBOSE=false
+WITH_OLLAMA=false
+OLLAMA_ONLY=false
+SKIP_SKILLS=false
 
 # ── Banner ──
 banner() {
@@ -59,15 +68,21 @@ show_help() {
     echo "  ./install.sh [options]"
     echo ""
     echo -e "${BOLD}Options:${NC}"
-    echo "  --fresh       Clean install — removes existing skills first"
-    echo "  --backup      Backup existing skills to ~/.agents/skills-backup-YYYYMMDD-HHMMSS/"
-    echo "  --dry-run     Show what would be installed without actually doing it"
-    echo "  --verbose     Show detailed output"
-    echo "  --help        Show this help message"
+    echo "  --fresh          Clean install — removes existing skills first"
+    echo "  --backup         Backup existing skills to ~/.agents/skills-backup-YYYYMMDD-HHMMSS/"
+    echo "  --dry-run        Show what would be installed without actually doing it"
+    echo "  --verbose        Show detailed output"
+    echo "  --with-ollama    Also install Ollama + pull Eburon model (media-pipe/eburon-sandbox-worker)"
+    echo "  --ollama-only    Only install Ollama + pull Eburon model (skip skills)"
+    echo "  --help           Show this help message"
     echo ""
     echo -e "${BOLD}What this installs:${NC}"
-    echo "  ~/.agents/skills/     — 121+ agent skills (Azure, edge LLM, workflow, design, etc.)"
+    echo "  ~/.agents/skills/     — 85+ agent skills (Azure, edge LLM, workflow, design, etc.)"
     echo "  ~/.opencode/skills/   — 18+ opencode skills (video, browser, PWA, etc.)"
+    echo ""
+    echo -e "${BOLD}With --with-ollama also installs:${NC}"
+    echo "  ollama                — Local LLM runner (auto-detects macOS/Linux/WSL)"
+    echo "  $EBURON_MODEL         — Eburon AI sandbox model (1GB, vision + tools, 256K ctx)"
     echo ""
     echo -e "${BOLD}After install:${NC}"
     echo "  Skills load automatically in your AI agents when you invoke them by name."
@@ -77,12 +92,14 @@ show_help() {
 # ── Parse Arguments ──
 for arg in "$@"; do
     case "$arg" in
-        --fresh)    FRESH=true ;;
-        --backup)   BACKUP=true ;;
-        --dry-run)  DRY_RUN=true ;;
-        --verbose)  VERBOSE=true ;;
-        --help)     show_help; exit 0 ;;
-        *)          echo -e "${RED}Unknown option: $arg${NC}"; show_help; exit 1 ;;
+        --fresh)        FRESH=true ;;
+        --backup)       BACKUP=true ;;
+        --dry-run)      DRY_RUN=true ;;
+        --verbose)      VERBOSE=true ;;
+        --with-ollama)  WITH_OLLAMA=true ;;
+        --ollama-only)  OLLAMA_ONLY=true; SKIP_SKILLS=true ;;
+        --help)         show_help; exit 0 ;;
+        *)              echo -e "${RED}Unknown option: $arg${NC}"; show_help; exit 1 ;;
     esac
 done
 
@@ -98,6 +115,120 @@ check_deps() {
         echo "Please install them and try again."
         exit 1
     fi
+}
+
+# ── Detect Platform ──
+detect_platform() {
+    local os="$(uname -s)"
+    case "$os" in
+        Darwin)  echo "macOS" ;;
+        Linux)   echo "Linux" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "Windows" ;;
+        *)       echo "Unknown" ;;
+    esac
+}
+
+# ── Check if Ollama is Installed ──
+ollama_installed() {
+    command -v ollama >/dev/null 2>&1
+}
+
+# ── Check if Ollama is Running ──
+ollama_running() {
+    curl -s --max-time 2 http://localhost:11434/api/tags >/dev/null 2>&1
+}
+
+# ── Install Ollama ──
+install_ollama() {
+    local platform=$(detect_platform)
+
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Installing Ollama ──────────────────────────${NC}"
+
+    if ollama_installed; then
+        local ollama_version=$(ollama --version 2>/dev/null || echo "unknown")
+        success "Ollama already installed (version: $ollama_version)"
+    else
+        step "Installing Ollama on $platform..."
+
+        if [ "$DRY_RUN" = true ]; then
+            info "[DRY RUN] Would install Ollama via: curl -fsSL $OLLAMA_INSTALL_URL | sh"
+            return
+        fi
+
+        case "$platform" in
+            macOS|Linux)
+                curl -fsSL "$OLLAMA_INSTALL_URL" | sh || {
+                    warn "Ollama install script failed — trying manual install..."
+                    if [ "$platform" = "macOS" ] && command -v brew >/dev/null 2>&1; then
+                        brew install ollama 2>/dev/null || fail "Failed to install Ollama"
+                    else
+                        fail "Failed to install Ollama. Install manually: https://ollama.com/download"
+                    fi
+                }
+                ;;
+            Windows)
+                warn "Windows detected — install Ollama manually: winget install Ollama.Ollama"
+                ;;
+            *)
+                fail "Unsupported platform: $platform. Install manually: https://ollama.com/download"
+                ;;
+        esac
+
+        success "Ollama installed"
+    fi
+
+    if ! ollama_running; then
+        step "Starting Ollama..."
+        if [ "$DRY_RUN" = true ]; then
+            info "[DRY RUN] Would start Ollama service"
+        elif pgrep -x ollama >/dev/null 2>&1; then
+            success "Ollama is already running"
+        else
+            ollama serve >/dev/null 2>&1 &
+            sleep 2
+            ollama_running && success "Ollama started" || warn "Ollama may still be starting..."
+        fi
+    else
+        success "Ollama is running"
+    fi
+}
+
+# ── Pull Eburon Model ──
+pull_eburon_model() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  ─── Pulling Eburon Model ───────────────────────${NC}"
+
+    local model="$EBURON_MODEL"
+    step "Model: $model (1GB, vision + tools, 256K context)"
+
+    if [ "$DRY_RUN" = true ]; then
+        info "[DRY RUN] Would run: ollama pull $model"
+        return
+    fi
+
+    if ollama list 2>/dev/null | grep -q "$model"; then
+        success "Model already downloaded: $model"
+        return
+    fi
+
+    step "Downloading model (1GB — this may take a few minutes)..."
+    if ollama pull "$model" 2>&1; then
+        success "Model pulled: $model"
+    else
+        warn "Model pull failed. Pull it manually: ollama pull $model"
+        return
+    fi
+
+    echo ""
+    echo -e "  ${CYAN}Run the model:${NC}"
+    echo "    ollama run $model"
+    echo ""
+    echo -e "  ${CYAN}Use with coding agents:${NC}"
+    echo "    ollama launch claude --model $model"
+    echo "    ollama launch opencode --model $model"
+    echo "    ollama launch codex --model $model"
+    echo "    ollama launch hermes --model $model"
 }
 
 # ── Print Step ──
@@ -277,36 +408,49 @@ trap cleanup EXIT
 # ─── Main ──────────────────────────────────────────────────────────────
 main() {
     banner
-    
+
     check_deps
 
     # Show existing counts
     local before_agents=$(count_skills "$AGENTS_DIR")
     local before_opencode=$(count_skills "$OPENCODE_DIR")
     local before_total=$((before_agents + before_opencode))
-    
-    if [ "$before_total" -gt 0 ]; then
+
+    if [ "$before_total" -gt 0 ] && [ "$SKIP_SKILLS" != true ]; then
         echo -e "${YELLOW}Existing skills found: $before_agents agent + $before_opencode opencode = $before_total total${NC}"
         echo ""
     fi
 
-    # Handle fresh install
-    if [ "$FRESH" = true ]; then
-        step "Fresh install mode — removing existing skills"
-        $BACKUP && backup_existing
-        clean_existing
-    elif [ "$BACKUP" = true ]; then
-        backup_existing
+    # ── Skills Installation ──
+    if [ "$SKIP_SKILLS" != true ]; then
+        if [ "$FRESH" = true ]; then
+            step "Fresh install mode — removing existing skills"
+            $BACKUP && backup_existing
+            clean_existing
+        elif [ "$BACKUP" = true ]; then
+            backup_existing
+        fi
+
+        clone_repo
+        install_skills "$TEMP_DIR/.agents/skills" "$AGENTS_DIR" "Agent"
+        install_skills "$TEMP_DIR/.opencode/skills" "$OPENCODE_DIR" "OpenCode"
+        verify_install
     fi
 
-    # Clone and install
-    clone_repo
+    # ── Ollama + Eburon Model ──
+    if [ "$WITH_OLLAMA" = true ] || [ "$OLLAMA_ONLY" = true ]; then
+        install_ollama
+        pull_eburon_model
+    fi
 
-    install_skills "$TEMP_DIR/.agents/skills" "$AGENTS_DIR" "Agent"
-    install_skills "$TEMP_DIR/.opencode/skills" "$OPENCODE_DIR" "OpenCode"
-
-    verify_install
-    show_next_steps
+    if [ "$SKIP_SKILLS" != true ]; then
+        show_next_steps
+    else
+        echo ""
+        echo -e "${BOLD}${GREEN}╔═══════════════════════════════════════════╗${NC}"
+        echo -e "${BOLD}${GREEN}║   ✓ Ollama + Eburon Model Ready!         ║${NC}"
+        echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════╝${NC}"
+    fi
 }
 
 main
