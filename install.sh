@@ -455,6 +455,24 @@ EBURONCODE_EOF
     echo -e "  ${CYAN}Launch Eburon-powered OpenCode TUI:${NC}"
     echo "    eburoncode"
     echo ""
+
+    # Install AGENTS.md template
+    local agents_dest="$HOME/.agents/AGENTS.md"
+    if [ ! -f "$agents_dest" ] || [ "$FORCE" = true ]; then
+        if [ -f "$TEMP_DIR/AGENTS.md" ]; then
+            mkdir -p "$(dirname "$agents_dest")"
+            cp "$TEMP_DIR/AGENTS.md" "$agents_dest"
+            success "AGENTS.md installed to: $agents_dest"
+        fi
+    fi
+
+    # Install skill-index
+    local index_dest="$HOME/.opencode/bin/skill-index"
+    if [ -f "$TEMP_DIR/bin/skill-index" ]; then
+        cp "$TEMP_DIR/bin/skill-index" "$index_dest"
+        chmod 755 "$index_dest"
+        success "skill-index installed to: $index_dest"
+    fi
     echo -e "  ${CYAN}Or with a project:${NC}"
     echo "    eburoncode /path/to/project"
     echo ""
@@ -541,6 +559,22 @@ preflight_check() {
         echo -e "  ${GREEN}✓${NC} OpenCode config: ~/.config/opencode/opencode.json"
     else
         echo -e "  ${YELLOW}○${NC} OpenCode config: not configured"
+        all_ok=false
+    fi
+
+    # AGENTS.md template
+    if [ -f "$HOME/.agents/AGENTS.md" ]; then
+        echo -e "  ${GREEN}✓${NC} AGENTS.md: ~/.agents/AGENTS.md"
+    else
+        echo -e "  ${YELLOW}○${NC} AGENTS.md: not installed"
+        all_ok=false
+    fi
+
+    # Skill routing index
+    if [ -f "$HOME/.config/opencode/skills-index.md" ]; then
+        echo -e "  ${GREEN}✓${NC} Skill index: ~/.config/opencode/skills-index.md"
+    else
+        echo -e "  ${YELLOW}○${NC} Skill index: not generated"
         all_ok=false
     fi
 
