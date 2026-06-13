@@ -1,253 +1,267 @@
 #!/usr/bin/env bash
-# ─── eburoncode ───────────────────────────────────────────────────────
-# Launch OpenCode TUI powered by the Eburon AI sandbox model.
-# Auto-bootstraps the full skill activation environment:
-#   Ollama → Model → Skills Index → AGENTS.md → OpenCode
+# ─── eburoncode — Multi-Agent AI Conductor ────────────────────────────
+# Detects all installed AI agents and routes tasks to the best one.
+# Each agent gets skills loaded as playbooks for its domain.
 #
 # Usage:
-#   eburoncode                       # Launch in current directory
-#   eburoncode /path/to/project      # Launch in specific project
-#   eburoncode "build me a todo app" # Launch with initial prompt
+#   eburoncode                         → OpenCode TUI (default, coding)
+#   eburoncode "build a dashboard"     → OpenCode with prompt
+#   eburoncode --hermes "research X"   → Hermes Agent (memory, autonomous)
+#   eburoncode --claude "review this"  → Claude Code (review, security)
+#   eburoncode --codex "audit code"    → Codex CLI (second opinion)
+#   eburoncode --list                  → Show all detected agents
+#   eburoncode --agent hermes "task"   → Generic agent routing
 #
-# Skill Activation:
-#   $skill-name          Explicit invocation (loads full SKILL.md)
-#   "build a UI"         Implicit matching via description trigger words
-#   skill-orchestrator   Bootstrap meta-skill for complex workflows
+# Skill Routing (loaded into each agent):
+#   $skill-name  → explicit invocation
+#   trigger words → implicit matching via AGENTS.md
 # ───────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
 EBURON_MODEL="${EBURON_MODEL:-media-pipe/eburon-sandbox-worker}"
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
-SKILL_INDEX="${HOME}/.config/opencode/skills-index.md"
-AGENTS_TEMPLATE="${HOME}/.agents/AGENTS.md"
-OP_SKILLS="${HOME}/.opencode/skills"
 AG_SKILLS="${HOME}/.agents/skills"
+OP_SKILLS="${HOME}/.opencode/skills"
 
 # ── Colors ──
 CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 RED='\033[0;31m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+MAGENTA='\033[0;35m'; BLUE='\033[0;34m'
 
 banner() {
     echo -e "${CYAN}${BOLD}"
     echo "  ╔═══════════════════════════════════════════╗"
-    echo "  ║     🤖 eburoncode — Eburon AI + OpenCode ║"
-    echo "  ║     model: $EBURON_MODEL"
+    echo "  ║  🤖 eburoncode — Multi-Agent Conductor   ║"
+    echo "  ║  Eburon AI · ollama://$EBURON_MODEL"
     echo "  ╚═══════════════════════════════════════════╝"
     echo -e "${NC}"
 }
 
-# ── Ensure Ollama running ──
+# ── Ensure infrastructure ──
 ensure_ollama() {
     curl -s --max-time 2 "$OLLAMA_URL/api/tags" >/dev/null 2>&1 && return 0
-    echo -e "${YELLOW}Ollama not running — starting...${NC}"
+    echo -e "${YELLOW}Starting Ollama...${NC}"
     command -v ollama >/dev/null 2>&1 || { echo -e "${RED}✗ Ollama not installed${NC}"; exit 1; }
     ollama serve >/dev/null 2>&1 & sleep 2
-    curl -s --max-time 2 "$OLLAMA_URL/api/tags" >/dev/null 2>&1 && echo -e "${GREEN}✓ Ollama started${NC}" || { echo -e "${RED}✗ Cannot reach Ollama${NC}"; exit 1; }
+    curl -s --max-time 2 "$OLLAMA_URL/api/tags" >/dev/null 2>&1 && echo -e "${GREEN}✓ Ollama${NC}" || { echo -e "${RED}✗ Cannot reach Ollama${NC}"; exit 1; }
 }
 
-# ── Ensure model pulled ──
 ensure_model() {
     ollama list 2>/dev/null | grep -q "$EBURON_MODEL" && return 0
     echo -e "${YELLOW}Pulling $EBURON_MODEL (1GB)...${NC}"
     ollama pull "$EBURON_MODEL" || { echo -e "${RED}✗ Pull failed${NC}"; exit 1; }
-    echo -e "${GREEN}✓ Model ready${NC}"
 }
 
-# ── Build skill index (progressive disclosure) ──
-build_skill_index() {
-    local total=0
-    local timestamp=$(date '+%H:%M:%S')
-    
-    {
-        echo "# Skill Routing Index"
-        echo "> ${timestamp} · Scan name+description only — load full SKILL.md on match"
-        echo ""
-        echo "| Trigger Words | Skill |"
-        echo "|--------------|-------|"
-    } > "$SKILL_INDEX"
-
-    for dir in "$AG_SKILLS" "$OP_SKILLS"; do
-        [ -d "$dir" ] || continue
-        for skill_dir in "$dir"/*/; do
-            [ -d "$skill_dir" ] || continue
-            local f="$skill_dir/SKILL.md"
-            [ -f "$f" ] || continue
-            local name=$(grep "^name:" "$f" | head -1 | sed 's/name: *//')
-            local hint=$(grep "^argument-hint:" "$f" | head -1 | sed 's/argument-hint: *//')
-            [ -z "$name" ] && continue
-            echo "| \`${hint:-$name}\` | \`${name}\` |" >> "$SKILL_INDEX"
-            total=$((total + 1))
-        done
-    done
-    
-    echo "" >> "$SKILL_INDEX"
-    echo "**$total skills** · Use \`\$skill-name\` to invoke · Match trigger words for implicit loading" >> "$SKILL_INDEX"
-}
-
-# ── Bootstrap project for skills ──
-bootstrap_project() {
-    local project_dir="${1:-$(pwd)}"
-    
-    # Install/update AGENTS.md
-    if [ -f "$AGENTS_TEMPLATE" ]; then
-        if [ ! -f "$project_dir/AGENTS.md" ]; then
-            cp "$AGENTS_TEMPLATE" "$project_dir/AGENTS.md"
-            echo -e "${GREEN}✓ Created AGENTS.md with skill routing rules${NC}"
-        elif ! grep -q "Progressive Disclosure Rule" "$project_dir/AGENTS.md" 2>/dev/null; then
-            # Existing AGENTS.md but doesn't have skill routing — append it
-            echo "" >> "$project_dir/AGENTS.md"
-            cat "$AGENTS_TEMPLATE" >> "$project_dir/AGENTS.md"
-            echo -e "${GREEN}✓ Patched AGENTS.md with skill routing rules${NC}"
-        else
-            echo -e "${DIM}  AGENTS.md OK${NC}"
-        fi
-    fi
-
-    # Ensure .agents/skills directory exists in project
-    mkdir -p "$project_dir/.agents/skills"
-    
-    # Symlink user skills into project if not already present
-    if [ ! -d "$project_dir/.agents/skills/skill-orchestrator" ] && [ -d "$AG_SKILLS" ]; then
-        for skill_dir in "$AG_SKILLS"/*/; do
-            local name=$(basename "$skill_dir")
-            [ -e "$project_dir/.agents/skills/$name" ] || ln -sf "$skill_dir" "$project_dir/.agents/skills/$name" 2>/dev/null
-        done
-    fi
-}
-
-# ── Ensure OpenCode config is fully wired for skills ──
-# Always writes a COMPLETE config that OpenCode server can parse.
-# Partial configs cause '4 of 5 requests failed' on startup.
 ensure_config() {
-    local config_file="$HOME/.config/opencode/opencode.json"
-    mkdir -p "$(dirname "$config_file")"
-
-    # Build complete config — preserve existing complex keys if present
-    if command -v python3 >/dev/null 2>&1; then
-        python3 <<PYEOF
-import json, os
-
-cfg_file = os.path.expanduser("$config_file")
-model = os.environ.get("EBURON_MODEL", "media-pipe/eburon-sandbox-worker")
-
-existing = {}
-if os.path.exists(cfg_file):
-    try:
-        with open(cfg_file) as f:
-            existing = json.load(f)
-    except:
-        pass
-
-cfg = {
-    "\$schema": "https://opencode.ai/config.json",
-    "instructions": existing.get("instructions", ["AGENTS.md"]),
-    "model": existing.get("model", model),
-    "skills": {
-        "paths": existing.get("skills", {}).get("paths", ["~/.opencode/skills", "~/.agents/skills"])
-    },
-    "provider": {
-        "ollama": {
-            "name": "Ollama",
-            "npm": "@ai-sdk/openai-compatible",
-            "options": {"baseURL": "http://127.0.0.1:11434/v1"},
-            "models": {model: {"name": model}}
-        }
-    },
-    "disabled_providers": existing.get("disabled_providers", [])
-}
-
-# Preserve extra keys: agent, mcp, command, etc.
-for k in existing:
-    if k not in cfg:
-        cfg[k] = existing[k]
-
-with open(cfg_file, "w") as f:
-    json.dump(cfg, f, indent=2)
-
-# Detect if this was a fix (old broken config) or fresh
-was_broken = "\$schema" not in existing if existing else False
-if was_broken and existing:
-    print("fixed")
-elif not existing:
-    print("created")
-else:
-    print("ok")
-PYEOF
-    else
-        # Pure bash fallback — complete config
-        cat > "$config_file" <<CFGEOF
+    local cf="$HOME/.config/opencode/opencode.json"
+    mkdir -p "$(dirname "$cf")"
+    [ -f "$cf" ] && return 0
+    cat > "$cf" <<CFG
 {
   "\$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md"],
   "model": "$EBURON_MODEL",
-  "skills": {
-    "paths": ["~/.opencode/skills", "~/.agents/skills"]
-  },
-  "provider": {
-    "ollama": {
-      "name": "Ollama",
-      "npm": "@ai-sdk/openai-compatible",
-      "options": { "baseURL": "http://127.0.0.1:11434/v1" },
-      "models": { "$EBURON_MODEL": { "name": "$EBURON_MODEL" } }
-    }
-  },
+  "skills": { "paths": ["~/.opencode/skills", "~/.agents/skills"] },
+  "provider": { "ollama": { "name": "Ollama", "npm": "@ai-sdk/openai-compatible", "options": { "baseURL": "http://127.0.0.1:11434/v1" }, "models": { "$EBURON_MODEL": { "name": "$EBURON_MODEL" } } } },
   "disabled_providers": []
 }
-CFGEOF
-        echo "created"
+CFG
+}
+
+# ── Agent Detection ────────────────────────────────────────────────────
+
+# Agent registry functions
+agent_bin() {
+    case "$1" in
+        opencode) echo "opencode" ;; hermes) echo "hermes" ;; claude) echo "claude" ;;
+        codex) echo "codex" ;; gemini) echo "gemini" ;; *) echo "" ;; esac
+}
+agent_desc() {
+    case "$1" in
+        opencode) echo "OpenCode TUI — coding, building, editing" ;;
+        hermes)   echo "Hermes Agent — personal AI, memory, autonomous, research" ;;
+        claude)   echo "Claude Code — review, security, architecture, planning" ;;
+        codex)    echo "Codex CLI — second opinion, adversarial review, audit" ;;
+        gemini)   echo "Gemini CLI — big context, plan review, analysis" ;;
+        *) echo "" ;; esac
+}
+agent_domain() {
+    case "$1" in
+        opencode) echo "coding:building:editing:full-stack" ;;
+        hermes)   echo "research:memory:autonomous:scheduling:personal" ;;
+        claude)   echo "review:security:architecture:planning:docs" ;;
+        codex)    echo "review:audit:challenge:second-opinion" ;;
+        gemini)   echo "analysis:plan-review:big-context:research" ;;
+        *) echo "" ;; esac
+}
+
+detect_agents() {
+    :  # registry is in functions above
+}
+
+# ── Detect installed agents ──
+scan_agents() {
+    local count=0
+    for name in opencode hermes claude codex gemini; do
+        local bin=$(agent_bin "$name")
+        [ -n "$bin" ] && command -v "$bin" >/dev/null 2>&1 && count=$((count + 1))
+    done
+    echo "$count"
+}
+
+# ── Show agent status ──
+show_agents() {
+    echo ""
+    echo -e "  ${CYAN}Available Agents:${NC}"
+    echo ""
+    for name in opencode hermes claude codex gemini; do
+        local bin=$(agent_bin "$name")
+        if [ -n "$bin" ] && command -v "$bin" >/dev/null 2>&1; then
+            local ver=$($bin --version 2>/dev/null | head -1 | cut -c1-40 || echo "installed")
+            echo -e "  ${GREEN}●${NC} ${BOLD}$name${NC} ${DIM}— $(agent_desc "$name")${NC}"
+            echo -e "    ${DIM}domains: $(agent_domain "$name")${NC}"
+        else
+            echo -e "  ${RED}○${NC} ${DIM}$name — not installed${NC}"
+        fi
+    done
+    echo ""
+}
+
+# ── Match task to best agent ──
+match_agent() {
+    local task="${1:-}"
+    local best="opencode"  # default
+
+    # Keyword routing
+    case "$(echo "$task" | tr '[:upper:]' '[:lower:]')" in
+        *research*|*investigate*|*memory*|*remember*|*autonomous*|*cron*|*schedule*|*personal*)
+            command -v hermes >/dev/null 2>&1 && best="hermes" ;;
+        *review*|*audit*|*security*|*vulnerability*|*architecture*|*plan*|*document*)
+            command -v claude >/dev/null 2>&1 && best="claude" ;;
+        *second*opinion*|*challenge*|*adversarial*|*codex*)
+            command -v codex >/dev/null 2>&1 && best="codex" ;;
+        *analyze*|*analysis*|*big*context*|*compare*)
+            command -v gemini >/dev/null 2>&1 && best="gemini";;
+    esac
+
+    echo "$best"
+}
+
+# ── Launch an agent with skills ──
+launch_agent() {
+    local agent="$1"
+    shift
+    local bin=$(agent_bin "$agent")
+    local args=("$@")
+
+    echo -e "${CYAN}Launching:${NC} ${BOLD}$agent${NC} ${DIM}($(agent_desc "$agent"))${NC}"
+    echo -e "${CYAN}Domains:${NC}  $(agent_domain "$agent")"
+    echo ""
+
+    if [ ! -f "AGENTS.md" ] && [ -f "$HOME/.agents/AGENTS.md" ]; then
+        cp "$HOME/.agents/AGENTS.md" ./AGENTS.md 2>/dev/null || true
     fi
 
-    case "${status:-ok}" in
-        fixed)   echo -e "${GREEN}✓ Config fixed — broken config replaced${NC}" ;;
-        created) echo -e "${GREEN}✓ Config created — ready for OpenCode${NC}" ;;
-        ok)      echo -e "${DIM}  Config OK${NC}" ;;
-    esac
+    exec "$bin" "${args[@]}"
 }
 
 # ── Show status ──
 show_status() {
     local agent_count=$(ls -d "$AG_SKILLS"/*/ 2>/dev/null | wc -l | tr -d ' ')
     local op_count=$(ls -d "$OP_SKILLS"/*/ 2>/dev/null | wc -l | tr -d ' ')
-    local total=$((agent_count + op_count))
-    
+    local agents=$(scan_agents)
     echo ""
-    echo -e "  ${CYAN}Model:${NC}    $EBURON_MODEL"
-    echo -e "  ${CYAN}Provider:${NC}  ollama → $OLLAMA_URL"
-    echo -e "  ${CYAN}Skills:${NC}   ${BOLD}$total${NC} available ($agent_count agent + $op_count opencode)"
-    echo -e "  ${CYAN}Routing:${NC}   \$skill-name explicit · trigger-word implicit"
-    echo -e "  ${CYAN}Index:${NC}    $SKILL_INDEX"
+    echo -e "  ${CYAN}Infrastructure:${NC}"
+    echo -e "    Ollama:  $(ollama_running && echo -e "${GREEN}running${NC}" || echo -e "${RED}stopped${NC}")"
+    echo -e "    Model:   ${BOLD}$EBURON_MODEL${NC}"
+    echo -e "    Skills:  ${BOLD}$((agent_count + op_count))${NC} ($agent_count agent + $op_count opencode)"
+    echo -e "    Agents:  ${BOLD}$agents${NC} available"
     echo ""
 }
 
-# ── Launch ──
-launch() {
-    local target="${1:-.}"
-    local extra_args=()
-
-    if [ -d "$target" ]; then
-        cd "$target"
-        shift 2>/dev/null || true
-        extra_args=("$@")
-    elif [ -n "${1:-}" ]; then
-        extra_args=("$@")
-    fi
-
-    export OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
-    exec "$OPENCODE_BIN" "${extra_args[@]}"
+# ── Help ──
+show_help() {
+    banner
+    echo -e "${BOLD}Usage:${NC}"
+    echo "  eburoncode                     OpenCode TUI (default)"
+    echo "  eburoncode \"build a todo app\"  OpenCode with prompt"
+    echo "  eburoncode /path/to/project    Launch in specific project"
+    echo ""
+    echo -e "${BOLD}Agent Routing:${NC}"
+    echo "  eburoncode --hermes \"task\"     Hermes Agent (research, memory, autonomous)"
+    echo "  eburoncode --claude \"task\"     Claude Code (review, security, architecture)"
+    echo "  eburoncode --codex \"task\"      Codex CLI (second opinion, audit)"
+    echo "  eburoncode --gemini \"task\"     Gemini CLI (big context analysis)"
+    echo "  eburoncode --agent NAME \"task\" Route to specific agent by name"
+    echo ""
+    echo -e "${BOLD}Commands:${NC}"
+    echo "  eburoncode --list              List all detected agents"
+    echo "  eburoncode --status            Show infrastructure status"
+    echo "  eburoncode --help              This help"
+    echo ""
+    echo -e "${BOLD}Skill Routing (in every agent):${NC}"
+    echo '  $skill-name                    Explicit invocation'
+    echo '  "build a dashboard"            Implicit matching via trigger words'
+    echo '  skill-orchestrator             Bootstrap meta-skill'
 }
 
-# ─── Main ──────────────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────────────
 main() {
     banner
+    detect_agents
+    local target_agent=""
+    local task_args=()
+
+    # Parse flags
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --hermes)   target_agent="hermes"; shift ;;
+            --claude)   target_agent="claude"; shift ;;
+            --codex)    target_agent="codex"; shift ;;
+            --gemini)   target_agent="gemini"; shift ;;
+            --agent)    target_agent="${2:-opencode}"; shift 2 ;;
+            --list)     show_agents; exit 0 ;;
+            --status)   ensure_ollama; ensure_model; show_status; show_agents; exit 0 ;;
+            --help)     show_help; exit 0 ;;
+            --*)        echo -e "${RED}Unknown: $1${NC}"; show_help; exit 1 ;;
+            -*)         task_args+=("$1"); shift ;;
+            *)          task_args+=("$1"); shift ;;
+        esac
+    done
+
+    # Default agent
+    [ -z "$target_agent" ] && target_agent="opencode"
+
+    # Verify agent is installed
+    local bin=$(agent_bin "$target_agent")
+    if [ -z "$bin" ] || ! command -v "$bin" >/dev/null 2>&1; then
+        echo -e "${RED}✗ $target_agent not installed${NC}"
+        echo ""
+        echo "Install options:"
+        echo "  Hermes:  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
+        echo "  Claude:  npm install -g @anthropic-ai/claude-code"
+        echo "  Codex:   npm install -g @openai/codex"
+        echo "  Gemini:  npm install -g @anthropic-ai/gemini-cli"
+        echo "  OpenCode: curl -fsSL https://opencode.ai/install | bash"
+        exit 1
+    fi
+
+    # Ensure infra for all agents
     ensure_ollama
     ensure_model
     ensure_config
-    build_skill_index
-    bootstrap_project "${1:-$(pwd)}"
+
+    # Show what we're doing
     show_status
-    launch "$@"
+
+    # Route: if first arg is a directory, cd into it
+    if [ "${#task_args[@]}" -gt 0 ] && [ -d "${task_args[0]}" ]; then
+        cd "${task_args[0]}"
+        task_args=("${task_args[@]:1}")
+    fi
+
+    launch_agent "$target_agent" "${task_args[@]}"
 }
 
 main "$@"
