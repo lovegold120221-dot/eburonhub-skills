@@ -302,77 +302,103 @@ configure_opencode_eburon() {
     step "Setting $model as default model via Ollama"
 
     if [ "$DRY_RUN" = true ]; then
-        info "[DRY RUN] Would configure: provider=ollama, model=$model"
+        info "[DRY RUN] Would write complete config with ollama + eburon"
         return
     fi
 
-    if ! command -v opencode >/dev/null 2>&1; then
-        warn "OpenCode CLI not found — skipping config"
-        return
-    fi
-
-    # Ensure config directory exists
     mkdir -p "$OPENCODE_CONFIG_DIR"
 
-    # Create or update config
-    if [ -f "$config_file" ]; then
-        # Config exists — use jq if available, otherwise python, otherwise warn
-        if command -v jq >/dev/null 2>&1; then
-            local tmp=$(mktemp)
-            jq --arg m "$model" '.provider = "ollama" | .model = $m' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
-            success "Updated existing config to use: $model"
-        elif command -v python3 >/dev/null 2>&1; then
-            python3 -c "
-import json, sys
-with open('$config_file') as f:
-    cfg = json.load(f)
-cfg['provider'] = 'ollama'
-cfg['model'] = '$model'
-with open('$config_file', 'w') as f:
-    json.dump(cfg, f, indent=2)
-print('done')
-" 2>/dev/null && success "Updated existing config to use: $model" || warn "Could not update config"
-        else
-            warn "Install jq for better config management. Config at: $config_file"
-        fi
-    else
-        # Create fresh config
-        if command -v python3 >/dev/null 2>&1; then
-            python3 -c "
-import json
+    # Always write a COMPLETE config that OpenCode server can parse.
+    # Partial configs cause '4 of 5 requests failed' on startup.
+    # This replaces any broken config with a working one.
+    if command -v python3 >/dev/null 2>&1; then
+        python3 <<PYEOF
+import json, os
+
+cfg_file = os.path.expanduser("$config_file")
+model = "$model"
+
+# Try to preserve existing config if it's complex and working
+existing = {}
+if os.path.exists(cfg_file):
+    try:
+        with open(cfg_file) as f:
+            existing = json.load(f)
+    except:
+        pass  # Broken JSON — will be replaced
+
+# Build a complete working config
 cfg = {
-    'provider': 'ollama',
-    'model': '$model',
-    'ollama': {
-        'url': 'http://localhost:11434'
-    }
-}
-with open('$config_file', 'w') as f:
-    json.dump(cfg, f, indent=2)
-" 2>/dev/null && success "Created config: provider=ollama, model=$model" || {
-            cat > "$config_file" <<EOF
-{
-  "provider": "ollama",
-  "model": "$model",
-  "ollama": {
-    "url": "http://localhost:11434"
-  }
-}
-EOF
-            success "Created config: provider=ollama, model=$model"
+    "\$schema": "https://opencode.ai/config.json",
+    "instructions": existing.get("instructions", ["AGENTS.md"]),
+    "model": existing.get("model", model),
+    "skills": {
+        "paths": existing.get("skills", {}).get("paths", ["~/.opencode/skills", "~/.agents/skills"])
+    },
+    "provider": {
+        "ollama": {
+            "name": "Ollama",
+            "npm": "@ai-sdk/openai-compatible",
+            "options": {"baseURL": "http://127.0.0.1:11434/v1"},
+            "models": {model: {"name": model}}
         }
-        else
-            cat > "$config_file" <<EOF
-{
-  "provider": "ollama",
-  "model": "$model",
-  "ollama": {
-    "url": "http://localhost:11434"
-  }
+    },
+    "disabled_providers": existing.get("disabled_providers", [])
 }
-EOF
-            success "Created config: provider=ollama, model=$model"
-        fi
+
+# Preserve extra keys from existing config (agent, mcp, command, etc.)
+for k in existing:
+    if k not in cfg:
+        cfg[k] = existing[k]
+
+with open(cfg_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+print("done")
+PYEOF
+        success "Config written: provider=ollama, model=$model"
+    else
+        # Fallback — pure bash, writes complete config
+        cat > "$config_file" <<CFGEOF
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "model": "$model",
+  "skills": {
+    "paths": ["~/.opencode/skills", "~/.agents/skills"]
+  },
+  "provider": {
+    "ollama": {
+      "name": "Ollama",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "http://127.0.0.1:11434/v1" },
+      "models": { "$model": { "name": "$model" } }
+    }
+  },
+  "disabled_providers": []
+}
+CFGEOF
+        success "Config written: provider=ollama, model=$model"
+    fi
+
+    # Ensure AGENTS.md exists for instructions reference
+    if [ ! -f "$HOME/.agents/AGENTS.md" ]; then
+        mkdir -p "$HOME/.agents"
+        cat > "$HOME/.agents/AGENTS.md" <<'AGENTSEOF'
+# AGENTS.md — EburonCode Skill Routing Rules
+
+## Skill Activation System
+
+Skills are lazy-loaded playbooks. Scan name+description first, load full SKILL.md only on match.
+
+**Explicit:** `$skill-name` or "use skill-name"
+**Implicit:** Task intent matches description trigger words
+
+### Always Do
+- Scan `~/.agents/skills/*/SKILL.md` and `~/.opencode/skills/*/SKILL.md` for name+description before every task
+- Match task intent → skill description → load SKILL.md
+- Follow the skill workflow top to bottom
+- Use `skill-orchestrator` when unsure which skill to use
+AGENTSEOF
     fi
 
     echo ""
@@ -383,7 +409,7 @@ EOF
     echo ""
     echo -e "  ${CYAN}Start coding:${NC}"
     echo "    cd <your-project>"
-    echo "    opencode"
+    echo "    eburoncode"
 }
 
 # ── Install eburoncode Command ──

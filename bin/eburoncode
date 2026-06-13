@@ -118,99 +118,91 @@ bootstrap_project() {
 }
 
 # ── Ensure OpenCode config is fully wired for skills ──
+# Always writes a COMPLETE config that OpenCode server can parse.
+# Partial configs cause '4 of 5 requests failed' on startup.
 ensure_config() {
     local config_file="$HOME/.config/opencode/opencode.json"
     mkdir -p "$(dirname "$config_file")"
 
-    # Create from scratch if missing — MUST be complete enough for OpenCode server
-    if [ ! -f "$config_file" ]; then
-        cat > "$config_file" <<'EOF'
+    # Build complete config — preserve existing complex keys if present
+    if command -v python3 >/dev/null 2>&1; then
+        python3 <<PYEOF
+import json, os
+
+cfg_file = os.path.expanduser("$config_file")
+model = os.environ.get("EBURON_MODEL", "media-pipe/eburon-sandbox-worker")
+
+existing = {}
+if os.path.exists(cfg_file):
+    try:
+        with open(cfg_file) as f:
+            existing = json.load(f)
+    except:
+        pass
+
+cfg = {
+    "\$schema": "https://opencode.ai/config.json",
+    "instructions": existing.get("instructions", ["AGENTS.md"]),
+    "model": existing.get("model", model),
+    "skills": {
+        "paths": existing.get("skills", {}).get("paths", ["~/.opencode/skills", "~/.agents/skills"])
+    },
+    "provider": {
+        "ollama": {
+            "name": "Ollama",
+            "npm": "@ai-sdk/openai-compatible",
+            "options": {"baseURL": "http://127.0.0.1:11434/v1"},
+            "models": {model: {"name": model}}
+        }
+    },
+    "disabled_providers": existing.get("disabled_providers", [])
+}
+
+# Preserve extra keys: agent, mcp, command, etc.
+for k in existing:
+    if k not in cfg:
+        cfg[k] = existing[k]
+
+with open(cfg_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+
+# Detect if this was a fix (old broken config) or fresh
+was_broken = "\$schema" not in existing if existing else False
+if was_broken and existing:
+    print("fixed")
+elif not existing:
+    print("created")
+else:
+    print("ok")
+PYEOF
+    else
+        # Pure bash fallback — complete config
+        cat > "$config_file" <<CFGEOF
 {
-  "$schema": "https://opencode.ai/config.json",
-  "instructions": [
-    "AGENTS.md",
-    "~/.config/opencode/developer.md"
-  ],
-  "model": "media-pipe/eburon-sandbox-worker",
+  "\$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "model": "$EBURON_MODEL",
   "skills": {
-    "paths": [
-      "~/.opencode/skills",
-      "~/.agents/skills"
-    ]
+    "paths": ["~/.opencode/skills", "~/.agents/skills"]
   },
   "provider": {
     "ollama": {
       "name": "Ollama",
       "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "http://127.0.0.1:11434/v1"
-      },
-      "models": {
-        "eburon": {
-          "name": "media-pipe/eburon-sandbox-worker"
-        }
-      }
+      "options": { "baseURL": "http://127.0.0.1:11434/v1" },
+      "models": { "$EBURON_MODEL": { "name": "$EBURON_MODEL" } }
     }
   },
   "disabled_providers": []
 }
-EOF
-        echo -e "${GREEN}✓ OpenCode config created${NC}"
-        return
+CFGEOF
+        echo "created"
     fi
 
-    # Config exists — only ADD missing keys, never restructure
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo -e "${DIM}  Config exists (no python3)${NC}"
-        return
-    fi
-
-    local status
-    status=$(python3 <<'PYEOF'
-import json, os
-
-cfg_file = os.path.expanduser("~/.config/opencode/opencode.json")
-with open(cfg_file) as f:
-    cfg = json.load(f)
-
-changed = False
-
-# Only ADD keys that are completely missing — never replace or restructure
-if "instructions" not in cfg:
-    cfg["instructions"] = ["AGENTS.md"]
-    changed = True
-elif isinstance(cfg.get("instructions"), list):
-    # Only inject AGENTS.md if instructions exist but don't have it
-    if "AGENTS.md" not in cfg["instructions"]:
-        cfg["instructions"] = ["AGENTS.md"] + cfg["instructions"]
-        changed = True
-
-# Only add skills.paths if the key is completely missing
-if "skills" not in cfg:
-    cfg["skills"] = {"paths": ["~/.opencode/skills", "~/.agents/skills"]}
-    changed = True
-elif isinstance(cfg.get("skills"), dict):
-    paths = cfg["skills"].get("paths", [])
-    for p in ["~/.opencode/skills", "~/.agents/skills"]:
-        if p not in paths:
-            paths.append(p)
-            changed = True
-    if paths != cfg["skills"].get("paths", []):
-        cfg["skills"]["paths"] = paths
-
-if changed:
-    with open(cfg_file, "w") as f:
-        json.dump(cfg, f, indent=2)
-    print("patched")
-else:
-    print("ok")
-PYEOF
-    )
-
-    case "$status" in
-        patched) echo -e "${GREEN}✓ Config patched — AGENTS.md + skills paths${NC}" ;;
+    case "${status:-ok}" in
+        fixed)   echo -e "${GREEN}✓ Config fixed — broken config replaced${NC}" ;;
+        created) echo -e "${GREEN}✓ Config created — ready for OpenCode${NC}" ;;
         ok)      echo -e "${DIM}  Config OK${NC}" ;;
-        *)       echo -e "${DIM}  Config checked${NC}" ;;
     esac
 }
 
